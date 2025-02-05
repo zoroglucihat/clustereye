@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
@@ -6,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const YAML = require('yaml');
 const { exec } = require('child_process');
+const OpenAI = require('openai');
 
 const store = new Store();
 
@@ -15,11 +17,18 @@ let mainWindow = null;  // mainWindow'u global olarak tutuyoruz
 let k8sConfig = null;
 let k8sApi = null;
 
+// OpenAI istemcisi
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseURL: 'https://api.proxyapi.ai/openai/v1', // Claude için proxy URL
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     backgroundColor: '#0a1929',
+    icon: path.join(__dirname, '../assets/logo.png'),
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -620,4 +629,241 @@ ipcMain.handle('exec-shell', async (event, { namespace, name, context }) => {
     console.error('Error in exec-shell:', error);
     throw error;
   }
-}); 
+});
+
+// AI Advisor handler
+ipcMain.handle('ask-advisor', async (event, { message, model, context }) => {
+  try {
+    const clusterInfo = await getClusterInfo(context);
+    
+    const systemPrompt = `You are Second Eye Advisor, an expert Kubernetes cluster analyst.
+    
+    Your capabilities:
+    1. Analyze cluster health and performance
+    2. Identify potential issues and bottlenecks
+    3. Suggest optimizations and best practices
+    4. Explain complex Kubernetes concepts
+    5. Provide troubleshooting guidance
+    
+    Current cluster context:
+    - Name: ${context?.name}
+    - Cluster: ${context?.cluster}
+    - User: ${context?.user}
+
+    Detailed cluster information:
+    ${clusterInfo.summary}
+
+    Guidelines:
+    - Start with a brief summary of cluster health
+    - Highlight any critical issues or warnings
+    - Provide specific metrics and details
+    - Use markdown formatting for better readability
+    - Suggest specific improvements when relevant
+    - Include kubectl commands for verification when useful
+    - Be proactive in identifying potential problems
+    - Focus on security, performance, and reliability
+
+    Remember: You're helping manage a production Kubernetes cluster. Be precise and security-conscious.`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message }
+      ],
+      temperature: 0.7,
+      max_tokens: 1500
+    });
+
+    return response.choices[0].message.content;
+  } catch (error) {
+    console.error('Error in AI advisor:', error);
+    return `Error analyzing cluster: ${error.message}. Please try again.`;
+  }
+});
+
+// Cluster bilgilerini topla
+async function getClusterInfo(context) {
+  try {
+    await setupKubernetesClient(context);
+    
+    // Tüm cluster kaynaklarını al
+    const [
+      nodes,
+      pods,
+      deployments,
+      services,
+      ingresses,
+      configmaps,
+      pvs,
+      pvcs,
+      events,
+      namespaces,
+      daemonsets,
+      statefulsets,
+      jobs,
+      cronjobs
+    ] = await Promise.all([
+      k8sApi.core.listNode().then(res => res.body),
+      k8sApi.core.listPodForAllNamespaces().then(res => res.body),
+      k8sApi.apps.listDeploymentForAllNamespaces().then(res => res.body),
+      k8sApi.core.listServiceForAllNamespaces().then(res => res.body),
+      k8sApi.networking.listIngressForAllNamespaces().then(res => res.body),
+      k8sApi.core.listConfigMapForAllNamespaces().then(res => res.body),
+      k8sApi.core.listPersistentVolume().then(res => res.body),
+      k8sApi.core.listPersistentVolumeClaimForAllNamespaces().then(res => res.body),
+      k8sApi.core.listEventForAllNamespaces().then(res => res.body),
+      k8sApi.core.listNamespace().then(res => res.body),
+      k8sApi.apps.listDaemonSetForAllNamespaces().then(res => res.body),
+      k8sApi.apps.listStatefulSetForAllNamespaces().then(res => res.body),
+      k8sApi.batch.listJobForAllNamespaces().then(res => res.body),
+      k8sApi.batch.listCronJobForAllNamespaces().then(res => res.body)
+    ]);
+
+    // Node detaylı analizi
+    const nodeAnalysis = nodes.items.map(node => ({
+      name: node.metadata.name,
+      status: node.status.conditions.find(c => c.type === 'Ready')?.status,
+      capacity: node.status.capacity,
+      allocatable: node.status.allocatable,
+      used: {
+        cpu: node.status.allocatable.cpu - node.status.capacity.cpu,
+        memory: `${(1 - (parseInt(node.status.allocatable.memory) / parseInt(node.status.capacity.memory))) * 100}%`
+      },
+      taints: node.spec.taints || [],
+      labels: node.metadata.labels,
+      conditions: node.status.conditions,
+      podCount: pods.items.filter(pod => pod.spec.nodeName === node.metadata.name).length
+    }));
+
+    // Namespace bazlı workload analizi
+    const namespaceAnalysis = {};
+    namespaces.items.forEach(ns => {
+      const nsName = ns.metadata.name;
+      namespaceAnalysis[nsName] = {
+        pods: pods.items.filter(p => p.metadata.namespace === nsName),
+        deployments: deployments.items.filter(d => d.metadata.namespace === nsName),
+        services: services.items.filter(s => s.metadata.namespace === nsName),
+        ingresses: ingresses.items.filter(i => i.metadata.namespace === nsName),
+        configmaps: configmaps.items.filter(c => c.metadata.namespace === nsName),
+        pvcs: pvcs.items.filter(p => p.metadata.namespace === nsName),
+        events: events.items.filter(e => e.metadata.namespace === nsName)
+      };
+    });
+
+    // Kritik durumları analiz et
+    const criticalIssues = [];
+    
+    // Node sorunları
+    nodes.items.forEach(node => {
+      const notReadyCondition = node.status.conditions.find(c => c.type === 'Ready' && c.status !== 'True');
+      if (notReadyCondition) {
+        criticalIssues.push(`Node ${node.metadata.name} is not ready: ${notReadyCondition.message}`);
+      }
+    });
+
+    // Pod sorunları
+    pods.items.forEach(pod => {
+      if (pod.status.phase === 'Failed' || pod.status.phase === 'Unknown') {
+        criticalIssues.push(`Pod ${pod.metadata.namespace}/${pod.metadata.name} is in ${pod.status.phase} state`);
+      }
+      
+      const crashLoopBackOff = pod.status.containerStatuses?.some(
+        status => status.state.waiting?.reason === 'CrashLoopBackOff'
+      );
+      if (crashLoopBackOff) {
+        criticalIssues.push(`Pod ${pod.metadata.namespace}/${pod.metadata.name} is in CrashLoopBackOff`);
+      }
+
+      const highRestarts = pod.status.containerStatuses?.some(
+        status => status.restartCount > 5
+      );
+      if (highRestarts) {
+        criticalIssues.push(`Pod ${pod.metadata.namespace}/${pod.metadata.name} has high restart count`);
+      }
+    });
+
+    // Resource kullanım analizi
+    const resourceUsage = {
+      totalCPU: {
+        capacity: nodes.items.reduce((acc, node) => acc + parseInt(node.status.capacity.cpu), 0),
+        used: pods.items.reduce((acc, pod) => {
+          return acc + (pod.spec.containers.reduce((sum, container) => 
+            sum + (parseInt(container.resources.requests?.cpu) || 0), 0));
+        }, 0)
+      },
+      totalMemory: {
+        capacity: nodes.items.reduce((acc, node) => acc + parseInt(node.status.capacity.memory), 0),
+        used: pods.items.reduce((acc, pod) => {
+          return acc + (pod.spec.containers.reduce((sum, container) => 
+            sum + (parseInt(container.resources.requests?.memory) || 0), 0));
+        }, 0)
+      }
+    };
+
+    return {
+      summary: `
+      Cluster Analysis Summary:
+      
+      1. Infrastructure Overview:
+      - Total Nodes: ${nodes.items.length}
+      - Ready Nodes: ${nodeAnalysis.filter(n => n.status === 'True').length}
+      - Total CPU Capacity: ${resourceUsage.totalCPU.capacity} cores
+      - Total Memory Capacity: ${resourceUsage.totalMemory.capacity}
+      - CPU Usage: ${((resourceUsage.totalCPU.used / resourceUsage.totalCPU.capacity) * 100).toFixed(2)}%
+      - Memory Usage: ${((resourceUsage.totalMemory.used / resourceUsage.totalMemory.capacity) * 100).toFixed(2)}%
+
+      2. Workload Statistics:
+      - Total Namespaces: ${namespaces.items.length}
+      - Total Pods: ${pods.items.length} (${pods.items.filter(p => p.status.phase === 'Running').length} Running)
+      - Deployments: ${deployments.items.length}
+      - StatefulSets: ${statefulsets.items.length}
+      - DaemonSets: ${daemonsets.items.length}
+      - Services: ${services.items.length}
+      - Ingresses: ${ingresses.items.length}
+      - Jobs: ${jobs.items.length}
+      - CronJobs: ${cronjobs.items.length}
+
+      3. Storage Status:
+      - PersistentVolumes: ${pvs.items.length}
+      - PersistentVolumeClaims: ${pvcs.items.length}
+      - ConfigMaps: ${configmaps.items.length}
+
+      4. Critical Issues (${criticalIssues.length}):
+      ${criticalIssues.map(issue => `- ${issue}`).join('\n')}
+
+      5. Node Details:
+      ${nodeAnalysis.map(node => `
+      * ${node.name}:
+        - Status: ${node.status}
+        - CPU: ${node.allocatable.cpu}/${node.capacity.cpu}
+        - Memory: ${node.allocatable.memory}/${node.capacity.memory}
+        - Pods: ${node.podCount}
+        - Conditions: ${node.conditions.map(c => `${c.type}=${c.status}`).join(', ')}
+      `).join('\n')}
+
+      6. Namespace Overview:
+      ${Object.entries(namespaceAnalysis).map(([ns, resources]) => `
+      * ${ns}:
+        - Pods: ${resources.pods.length} (${resources.pods.filter(p => p.status.phase === 'Running').length} Running)
+        - Deployments: ${resources.deployments.length}
+        - Services: ${resources.services.length}
+        - Ingresses: ${resources.ingresses.length}
+        - Recent Events: ${resources.events.length}
+      `).join('\n')}
+      `,
+      details: {
+        nodeAnalysis,
+        namespaceAnalysis,
+        criticalIssues,
+        resourceUsage
+      }
+    };
+  } catch (error) {
+    console.error('Error getting cluster info:', error);
+    return {
+      summary: `Unable to fetch detailed cluster information: ${error.message}`,
+      details: null
+    };
+  }
+} 

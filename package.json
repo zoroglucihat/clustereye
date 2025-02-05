@@ -5,7 +5,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "concurrently \"cross-env BROWSER=none NODE_ENV=development webpack serve\" \"wait-on http://localhost:8080 && cross-env NODE_ENV=development electron .\"",
-    "build": "webpack --config webpack.config.js && electron-builder"
+    "build": "webpack --config webpack.config.js && electron-builder",
+    "generate-icons": "node scripts/generate-icons.js"
   },
   "dependencies": {
     "@emotion/react": "^11.11.3",
@@ -15,6 +16,7 @@
     "@mui/icons-material": "^5.15.0",
     "@mui/material": "^5.15.0",
     "electron-store": "^8.1.0",
+    "openai": "^4.83.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.11.2",
@@ -39,6 +41,7 @@
     "electron-builder": "^24.9.1",
     "html-webpack-plugin": "^5.6.3",
     "monaco-editor-webpack-plugin": "^7.1.0",
+    "sharp": "^0.32.6",
     "style-loader": "^3.3.3",
     "wait-on": "^7.2.0",
     "webpack": "^5.89.0",
@@ -52,13 +55,16 @@
       "output": "dist"
     },
     "mac": {
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "icon": "src/assets/logo.icns"
     },
     "linux": {
-      "category": "Development"
+      "category": "Development",
+      "icon": "src/assets/logo.png"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "src/assets/logo.ico"
     }
   }
 }

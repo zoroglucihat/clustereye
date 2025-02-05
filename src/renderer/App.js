@@ -14,7 +14,8 @@ import {
   ListItemText,
   ListItemButton,
   Divider,
-  IconButton
+  IconButton,
+  Tooltip
 } from '@mui/material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import * as Icons from '@mui/icons-material';
@@ -22,6 +23,7 @@ import KubeconfigManager from './components/KubeconfigManager';
 import ClusterResources from './components/ClusterResources';
 import ResourceList from './components/ResourceList';
 import BottomPanel from './components/BottomPanel';
+import SecondEyeAdvisor from './components/SecondEyeAdvisor';
 
 const { ipcRenderer } = window.require('electron');
 
@@ -137,6 +139,7 @@ function App() {
   const [localContexts, setLocalContexts] = useState([]);
   const [localConfig, setLocalConfig] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showAdvisor, setShowAdvisor] = useState(false);
 
   useEffect(() => {
     loadConfigs();
@@ -312,6 +315,36 @@ function App() {
             <Typography variant="h6" noWrap component="div">
               ClusterEyeAI
             </Typography>
+            <Box sx={{ flexGrow: 1 }} />
+            <Tooltip title="Second Eye Advisor">
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <IconButton 
+                  color="inherit" 
+                  onClick={() => setShowAdvisor(!showAdvisor)}
+                  sx={{ 
+                    position: 'relative',
+                    '&::after': {
+                      content: '"SEA"',
+                      position: 'absolute',
+                      bottom: -8,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      fontSize: '0.6rem',
+                      fontWeight: 'bold',
+                      color: 'primary.light',
+                      letterSpacing: '0.05em'
+                    }
+                  }}
+                >
+                  <Icons.Psychology 
+                    sx={{ 
+                      fontSize: 28,
+                      color: showAdvisor ? 'primary.light' : 'inherit'
+                    }} 
+                  />
+                </IconButton>
+              </Box>
+            </Tooltip>
           </Toolbar>
         </AppBar>
         <Box
@@ -349,18 +382,39 @@ function App() {
             flexGrow: 1,
             p: 3,
             width: { sm: `calc(100% - ${DRAWER_WIDTH}px)` },
-            mt: '64px'
+            mt: '64px',
+            marginRight: showAdvisor ? `${DRAWER_WIDTH}px` : 0,
+            transition: theme =>
+              theme.transitions.create(['margin'], {
+                easing: theme.transitions.easing.sharp,
+                duration: theme.transitions.duration.leavingScreen,
+              }),
           }}
         >
           {renderContent()}
         </Box>
+        
+        <SecondEyeAdvisor
+          open={showAdvisor}
+          onClose={() => setShowAdvisor(false)}
+          currentContext={currentContext}
+        />
       </Box>
+      
       {showBottomPanel && (
         <BottomPanel
           selectedResource={selectedResource}
           currentContext={currentContext}
           onClose={() => setShowBottomPanel(false)}
           height={300}
+          sx={{
+            marginRight: showAdvisor ? `${DRAWER_WIDTH}px` : 0,
+            transition: theme =>
+              theme.transitions.create(['margin'], {
+                easing: theme.transitions.easing.sharp,
+                duration: theme.transitions.duration.leavingScreen,
+              }),
+          }}
         />
       )}
     </ThemeProvider>
