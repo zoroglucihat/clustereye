@@ -10,7 +10,7 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'public'),
     filename: 'bundle.js',
-    publicPath: './'
+    publicPath: '/'
   },
   module: {
     rules: [
@@ -30,11 +30,7 @@ module.exports = {
         use: ['style-loader', 'css-loader']
       },
       {
-        test: /\.(png|svg|jpg|jpeg|gif)$/i,
-        type: 'asset/resource'
-      },
-      {
-        test: /\.(woff|woff2|eot|ttf|otf)$/i,
+        test: /\.ttf$/,
         type: 'asset/resource'
       }
     ]
@@ -65,13 +61,15 @@ module.exports = {
   ],
   devServer: {
     static: {
-      directory: path.join(__dirname, 'public')
+      directory: path.join(__dirname, 'public'),
+      publicPath: '/'
     },
     port: 8080,
-    hot: true,
-    devMiddleware: {
-      writeToDisk: true
+    hot: false,
+    historyApiFallback: true,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* data: blob:"
     }
-  },
-  devtool: 'source-map'
+  }
 }; 

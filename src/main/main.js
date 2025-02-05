@@ -4,6 +4,7 @@ const Store = require('electron-store');
 const k8s = require('@kubernetes/client-node');
 const fs = require('fs');
 const os = require('os');
+const YAML = require('yaml');
 
 const store = new Store();
 
@@ -17,13 +18,39 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
-      webSecurity: false
+      webSecurity: false,
+      // Clipboard erişimi için gerekli ayarlar
+      enableRemoteModule: true,
+      spellcheck: false,
+      // Ek güvenlik ayarları
+      additionalArguments: ['--enable-features=PlatformHtmlWriter,PlatformClipboard']
     }
   });
 
+  // DevTools'u her zaman aç
+  mainWindow.webContents.openDevTools();
+
+  // Clipboard erişimi için menü oluştur
+  const { Menu } = require('electron');
+  const template = [
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    }
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:8080/index.html');
-    mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../public/index.html'));
   }
@@ -358,7 +385,7 @@ ipcMain.handle('get-events', async (event, context) => {
 });
 
 // Pod'da komut çalıştırma
-ipcMain.handle('exec-in-pod', async (event, { namespace, podName, command }) => {
+ipcMain.handle('exec-in-pod', async (event, { namespace, podName, command, context }) => {
   try {
     const kc = setupKubeConfig(context);
     const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
@@ -382,23 +409,129 @@ ipcMain.handle('exec-in-pod', async (event, { namespace, podName, command }) => 
   }
 });
 
-// YAML uygulama
-ipcMain.handle('apply-yaml', async (event, yamlContent) => {
+// Debug mode
+const DEBUG = true;
+
+// Debug logger
+const debugLog = (...args) => {
+  if (DEBUG) {
+    console.log('[DEBUG]', ...args);
+  }
+};
+
+// apply-yaml handler'ı
+ipcMain.handle('apply-yaml', async (event, { yamlContent, context }) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.KubernetesObjectApi);
+    debugLog('Received apply-yaml request:', { contextName: context.name });
     
-    const resources = k8s.loadAllYaml(yamlContent);
-    const results = [];
-    
-    for (const resource of resources) {
-      const result = await k8sApi.create(resource);
-      results.push(result);
+    if (!context?.config) {
+      throw new Error('Invalid context configuration');
     }
+
+    // Önce kubectl ile context'i değiştir
+    const { exec } = require('child_process');
+    await new Promise((resolve, reject) => {
+      exec(`kubectl config use-context ${context.name}`, (error, stdout, stderr) => {
+        if (error) {
+          debugLog('Error switching context:', error);
+          reject(error);
+          return;
+        }
+        debugLog('Successfully switched context:', stdout);
+        resolve(stdout);
+      });
+    });
+
+    // KubeConfig oluştur ve yükle
+    const kc = new k8s.KubeConfig();
+    kc.loadFromString(context.config);
     
-    return results;
+    // Context'i ayarla
+    if (context.name) {
+      kc.setCurrentContext(context.name);
+    }
+
+    // Kubernetes client'ı oluştur
+    const client = k8s.KubernetesObjectApi.makeApiClient(kc);
+
+    // YAML'ı parse et
+    const documents = YAML.parseAllDocuments(yamlContent).map(doc => doc.toJSON());
+    debugLog('Parsed YAML documents:', documents);
+
+    const results = [];
+
+    // Her bir resource için apply işlemi yap
+    for (const spec of documents) {
+      if (!spec) continue;
+
+      try {
+        debugLog(`Applying resource: ${spec.kind}/${spec.metadata?.name}`);
+        
+        try {
+          const response = await client.read(spec);
+          // Resource varsa güncelle
+          const result = await client.patch(spec);
+          results.push({
+            status: 'updated',
+            kind: spec.kind,
+            name: spec.metadata?.name,
+            namespace: spec.metadata?.namespace
+          });
+        } catch (error) {
+          if (error.statusCode === 404) {
+            // Resource yoksa oluştur
+            const result = await client.create(spec);
+            results.push({
+              status: 'created',
+              kind: spec.kind,
+              name: spec.metadata?.name,
+              namespace: spec.metadata?.namespace
+            });
+          } else {
+            throw error;
+          }
+        }
+      } catch (error) {
+        debugLog(`Error applying resource ${spec.kind}/${spec.metadata?.name}:`, error);
+        throw error;
+      }
+    }
+
+    debugLog('Successfully applied all resources:', results);
+    return { success: true, results };
   } catch (error) {
-    console.error('Error applying YAML:', error);
+    debugLog('Error in apply-yaml:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// Komut çalıştırma handler'ı
+ipcMain.handle('exec-command', async (event, { command, namespace, podName }) => {
+  try {
+    // Eğer komut kubectl ile başlamıyorsa, otomatik olarak ekle
+    if (!command.startsWith('kubectl')) {
+      if (podName) {
+        // Pod seçiliyse, pod içinde komut çalıştır
+        command = `kubectl exec -n ${namespace} ${podName} -- ${command}`;
+      } else {
+        // Pod seçili değilse, normal kubectl komutu çalıştır
+        command = `kubectl ${command}`;
+      }
+    }
+
+    // Komutu çalıştır
+    const { exec } = require('child_process');
+    return new Promise((resolve, reject) => {
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || error.message));
+          return;
+        }
+        resolve(stdout);
+      });
+    });
+  } catch (error) {
+    console.error('Error executing command:', error);
     throw error;
   }
 }); 

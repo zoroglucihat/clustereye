@@ -34,7 +34,7 @@ function TabPanel(props) {
   );
 }
 
-function ResourceList({ config }) {
+function ResourceList({ config, onResourceSelect, currentContext }) {
   const [value, setValue] = useState(0);
   const [pods, setPods] = useState([]);
   const [deployments, setDeployments] = useState([]);
@@ -56,13 +56,26 @@ function ResourceList({ config }) {
   const [selectedNamespace, setSelectedNamespace] = useState('all');
   const [namespaces, setNamespaces] = useState([]);
   const [showBottomPanel, setShowBottomPanel] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState(null);
 
   useEffect(() => {
     if (config) {
       console.log('ResourceList received config:', config); // Debug için
       loadResources();
       loadNamespaces();
+      // 2 saniyelik bir interval başlat
+      const interval = setInterval(() => {
+        loadResources();
+      }, 2000);
+      setRefreshInterval(interval);
     }
+
+    // Component unmount olduğunda interval'i temizle
+    return () => {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
+    };
   }, [config]);
 
   const loadResources = async () => {
@@ -443,6 +456,11 @@ function ResourceList({ config }) {
     return `${Math.floor(hours / 24)}d`;
   };
 
+  // YAML apply edildiğinde kaynakları hemen yenile
+  const handleResourceUpdate = () => {
+    loadResources();
+  };
+
   if (error) {
     return (
       <Box sx={{ p: 2 }}>
@@ -613,7 +631,9 @@ function ResourceList({ config }) {
       {showBottomPanel && (
         <BottomPanel
           selectedResource={selectedResource}
+          currentContext={currentContext}
           onClose={() => setShowBottomPanel(false)}
+          onResourceUpdate={handleResourceUpdate}
         />
       )}
 

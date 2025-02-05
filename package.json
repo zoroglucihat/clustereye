@@ -4,7 +4,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "concurrently -k \"cross-env BROWSER=none NODE_ENV=development webpack serve --config webpack.config.js\" \"wait-on tcp:8080 && cross-env NODE_ENV=development electron .\"",
+    "dev": "concurrently \"cross-env BROWSER=none NODE_ENV=development webpack serve\" \"wait-on http://localhost:8080 && cross-env NODE_ENV=development electron .\"",
     "build": "webpack --config webpack.config.js && electron-builder"
   },
   "dependencies": {
@@ -15,7 +15,6 @@
     "@mui/icons-material": "^5.15.0",
     "@mui/material": "^5.15.0",
     "electron-store": "^8.1.0",
-    "monaco-yaml": "^5.2.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.11.2",

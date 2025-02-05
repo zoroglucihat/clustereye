@@ -2,23 +2,11 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* data: blob:">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* data: blob: clipboard-*;">
     <title>KubeSucker</title>
     <link rel="stylesheet" href="./xterm.css">
 </head>
 <body>
     <div id="root"></div>
-    <script>
-        window.MonacoEnvironment = {
-            getWorkerUrl: function(workerId, label) {
-                const workers = {
-                    json: './json.worker.js',
-                    yaml: './yaml.worker.js',
-                    editorWorkerService: './editor.worker.js'
-                };
-                return workers[label] || workers.editorWorkerService;
-            }
-        };
-    </script>
 </body>
 </html> 

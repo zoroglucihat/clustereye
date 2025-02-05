@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Box, 
   AppBar, 
@@ -21,6 +21,7 @@ import * as Icons from '@mui/icons-material';
 import KubeconfigManager from './components/KubeconfigManager';
 import ClusterResources from './components/ClusterResources';
 import ResourceList from './components/ResourceList';
+import BottomPanel from './components/BottomPanel';
 
 const { ipcRenderer } = window.require('electron');
 
@@ -60,14 +61,15 @@ const darkTheme = createTheme({
 });
 
 function App() {
-  const [selectedConfig, setSelectedConfig] = React.useState(null);
-  const [configs, setConfigs] = React.useState({});
-  const [localContexts, setLocalContexts] = React.useState([]);
-  const [localConfig, setLocalConfig] = React.useState(null);
-  const [selectedResource, setSelectedResource] = React.useState(null);
-  const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [configs, setConfigs] = useState({});
+  const [selectedResource, setSelectedResource] = useState(null);
+  const [showBottomPanel, setShowBottomPanel] = useState(false);
+  const [currentContext, setCurrentContext] = useState(null);
+  const [localContexts, setLocalContexts] = useState([]);
+  const [localConfig, setLocalConfig] = useState(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     loadConfigs();
     loadLocalContexts();
   }, []);
@@ -93,6 +95,69 @@ function App() {
     setMobileOpen(!mobileOpen);
   };
 
+  const handleConfigSelect = (context) => {
+    console.log('Debug: Setting current context:', context);
+    setCurrentContext(context);
+    setSelectedResource('cluster'); // Context seçildiğinde cluster view'a geç
+    
+    if (window.electronAPI) {
+      window.electronAPI.currentContext = context;
+    }
+
+    localStorage.setItem('currentContext', JSON.stringify(context));
+  };
+
+  const handleDrawerItemClick = (context) => {
+    try {
+      console.log('Selected context:', context);
+      
+      // Context verilerini hazırla
+      const configData = {
+        name: context.name,
+        config: localConfig,
+        cluster: context.cluster,
+        user: context.user,
+        namespace: context.namespace || 'default',
+        currentContext: context.name
+      };
+
+      console.log('Context selected successfully:', configData.name); // Yeni log
+      console.log('Prepared context data:', configData);
+
+      // Context'i güncelle
+      setCurrentContext(configData);
+      
+      // Global context'i güncelle
+      if (window.electronAPI) {
+        window.electronAPI.currentContext = configData;
+        console.log('Global context updated'); // Yeni log
+      }
+
+      // Local storage'a kaydet
+      localStorage.setItem('currentContext', JSON.stringify(configData));
+      console.log('Context saved to localStorage'); // Yeni log
+
+      // Resource view'a geç
+      setSelectedResource('cluster');
+
+    } catch (error) {
+      console.error('Error setting context:', error);
+      alert('Failed to set context: ' + error.message);
+    }
+  };
+
+  // Context değişikliklerini izle
+  useEffect(() => {
+    if (currentContext) {
+      console.log('Current context updated:', currentContext);
+    }
+  }, [currentContext]);
+
+  const handleResourceSelect = (resource) => {
+    setSelectedResource(resource);
+    setShowBottomPanel(true);
+  };
+
   const drawer = (
     <div>
       <Toolbar />
@@ -112,19 +177,8 @@ function App() {
         {localContexts.map((context) => (
           <ListItem key={context.name} disablePadding>
             <ListItemButton 
-              onClick={() => {
-                console.log('Selected context:', context); // Debug için
-                const configData = {
-                  name: context.name,
-                  config: localConfig,
-                  cluster: context.cluster,
-                  user: context.user
-                };
-                console.log('Config data:', configData); // Debug için
-                setSelectedConfig(configData);
-                setSelectedResource('cluster');
-              }}
-              selected={selectedConfig?.name === context.name}
+              onClick={() => handleDrawerItemClick(context)}
+              selected={currentContext?.name === context.name}
             >
               <ListItemIcon>
                 <Icons.Storage color={context.isCurrent ? "primary" : "inherit"} />
@@ -147,15 +201,19 @@ function App() {
           <Paper sx={{ p: 2 }} elevation={2}>
             <KubeconfigManager 
               configs={configs}
-              onConfigSelect={setSelectedConfig}
+              onConfigSelect={handleConfigSelect}
               onConfigsUpdate={setConfigs}
             />
           </Paper>
         );
       case 'cluster':
-        return selectedConfig && (
+        return currentContext && (
           <Paper sx={{ p: 2 }} elevation={2}>
-            <ResourceList config={selectedConfig} />
+            <ResourceList 
+              config={currentContext}
+              onResourceSelect={handleResourceSelect}
+              currentContext={currentContext}
+            />
           </Paper>
         );
       default:
@@ -234,6 +292,14 @@ function App() {
           {renderContent()}
         </Box>
       </Box>
+      {showBottomPanel && (
+        <BottomPanel
+          selectedResource={selectedResource}
+          currentContext={currentContext}
+          onClose={() => setShowBottomPanel(false)}
+          height={300}
+        />
+      )}
     </ThemeProvider>
   );
 }
