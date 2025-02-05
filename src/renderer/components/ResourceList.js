@@ -42,7 +42,6 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
   const [configMaps, setConfigMaps] = useState([]);
   const [secrets, setSecrets] = useState([]);
   const [pvs, setPvs] = useState([]);
-  const [helmReleases, setHelmReleases] = useState([]);
   const [statefulSets, setStatefulSets] = useState([]);
   const [daemonSets, setDaemonSets] = useState([]);
   const [ingresses, setIngresses] = useState([]);
@@ -91,7 +90,6 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
         configMapList,
         secretList,
         pvList,
-        helmList,
         statefulSetList,
         daemonSetList,
         ingressList,
@@ -106,7 +104,6 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
         ipcRenderer.invoke('get-configmaps', config).catch(e => ({ items: [] })),
         ipcRenderer.invoke('get-secrets', config).catch(e => ({ items: [] })),
         ipcRenderer.invoke('get-pvs', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-helm-releases', config).catch(e => ({ items: [] })),
         ipcRenderer.invoke('get-statefulsets', config).catch(e => ({ items: [] })),
         ipcRenderer.invoke('get-daemonsets', config).catch(e => ({ items: [] })),
         ipcRenderer.invoke('get-ingresses', config).catch(e => ({ items: [] })),
@@ -122,7 +119,6 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
       setConfigMaps(configMapList.items || []);
       setSecrets(secretList.items || []);
       setPvs(pvList.items || []);
-      setHelmReleases(helmList.items || []);
       setStatefulSets(statefulSetList.items || []);
       setDaemonSets(daemonSetList.items || []);
       setIngresses(ingressList.items || []);
@@ -526,7 +522,6 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
               <Tab icon={<Icons.Settings />} label={`ConfigMaps (${filterResources(configMaps).length})`} />
               <Tab icon={<Icons.VpnKey />} label={`Secrets (${filterResources(secrets).length})`} />
               <Tab icon={<Icons.Storage />} label={`PV (${filterResources(pvs).length})`} />
-              <Tab icon={<Icons.AccountTree />} label={`Helm (${filterResources(helmReleases).length})`} />
               <Tab icon={<Icons.ViewQuilt />} label={`StatefulSets (${filterResources(statefulSets).length})`} />
               <Tab icon={<Icons.Extension />} label={`DaemonSets (${filterResources(daemonSets).length})`} />
               <Tab icon={<Icons.Http />} label={`Ingress (${filterResources(ingresses).length})`} />
@@ -574,53 +569,42 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
           </TabPanel>
 
           <TabPanel value={value} index={6}>
-            {renderResourceList(filterResources(helmReleases), (release) => {
-              const version = release.spec?.chart?.metadata?.version || release.spec?.version || 'N/A';
-              const status = release.info?.status || release.status?.phase || 'Unknown';
-              const namespace = release.metadata?.namespace || 'default';
-              const chartName = release.spec?.chart?.metadata?.name || release.spec?.chart?.name || 'Unknown';
-              
-              return `Namespace: ${namespace} | Chart: ${chartName} | Version: ${version} | Status: ${status}`;
-            })}
-          </TabPanel>
-
-          <TabPanel value={value} index={7}>
             {renderResourceList(filterResources(statefulSets), (sts) => 
               `Namespace: ${sts.metadata.namespace} | Replicas: ${sts.status.replicas}/${sts.spec.replicas}`
             )}
           </TabPanel>
 
-          <TabPanel value={value} index={8}>
+          <TabPanel value={value} index={7}>
             {renderResourceList(filterResources(daemonSets), (ds) => 
               `Namespace: ${ds.metadata.namespace} | Desired: ${ds.status.desiredNumberScheduled} | Current: ${ds.status.currentNumberScheduled}`
             )}
           </TabPanel>
 
-          <TabPanel value={value} index={9}>
+          <TabPanel value={value} index={8}>
             {renderResourceList(filterResources(ingresses), (ing) => 
               `Namespace: ${ing.metadata.namespace} | Hosts: ${ing.spec.rules?.map(r => r.host).join(', ')}`
             )}
           </TabPanel>
 
-          <TabPanel value={value} index={10}>
+          <TabPanel value={value} index={9}>
             {renderResourceList(filterResources(pvcs), (pvc) => 
               `Namespace: ${pvc.metadata.namespace} | Status: ${pvc.status.phase} | Size: ${pvc.spec.resources.requests.storage}`
             )}
           </TabPanel>
 
-          <TabPanel value={value} index={11}>
+          <TabPanel value={value} index={10}>
             {renderResourceList(filterResources(cronJobs), (cron) => 
               `Namespace: ${cron.metadata.namespace} | Schedule: ${cron.spec.schedule}`
             )}
           </TabPanel>
 
-          <TabPanel value={value} index={12}>
+          <TabPanel value={value} index={11}>
             {renderResourceList(filterResources(jobs), (job) => 
               `Namespace: ${job.metadata.namespace} | Completions: ${job.status.succeeded || 0}/${job.spec.completions || 1}`
             )}
           </TabPanel>
 
-          <TabPanel value={value} index={13}>
+          <TabPanel value={value} index={12}>
             {renderResourceList(filterResources(events), (event) => 
               `Namespace: ${event.metadata.namespace} | Type: ${event.type} | Reason: ${event.reason}`
             )}

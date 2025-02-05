@@ -28,6 +28,11 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
   const terminalRef = useRef(null);
   const terminalContainerRef = useRef(null);
   const [terminal, setTerminal] = useState(null);
+  const [username, setUsername] = useState('');
+  const [hostname, setHostname] = useState('');
+
+  // Terminal prompt'unu güncellemek için ref
+  const promptRef = useRef('$ ');
 
   useEffect(() => {
     // Component mount olduğunda context'i kontrol et
@@ -39,31 +44,85 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
     console.log('Context changed in BottomPanel:', currentContext);
   }, [currentContext]);
 
+  // Kullanıcı bilgilerini al
   useEffect(() => {
-    if (value === 0 && selectedResource?.kind === 'Pod' && !terminal) {
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 14,
-        fontFamily: 'Menlo, Monaco, monospace',
-        theme: {
-          background: '#1e1e1e',
-          foreground: '#ffffff',
-          cursor: '#ffffff',
-          selection: '#5DA5D533'
-        },
-        convertEol: true,
-        cursorStyle: 'block'
-      });
+    const getUserInfo = async () => {
+      if (currentContext) {
+        try {
+          // Önce mevcut shell'i öğren
+          const shellResult = await ipcRenderer.invoke('exec-command', {
+            command: 'echo $SHELL',
+            context: currentContext
+          });
 
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
+          const [usernameResult, hostnameResult] = await Promise.all([
+            ipcRenderer.invoke('exec-command', {
+              command: process.platform === 'win32' ? 'echo %USERNAME%' : 'whoami',
+              context: currentContext
+            }),
+            ipcRenderer.invoke('exec-command', {
+              command: 'hostname',
+              context: currentContext
+            })
+          ]);
+          
+          const user = usernameResult.trim();
+          const host = hostnameResult.trim();
+          
+          console.log('Got user info:', { user, host, shell: shellResult.trim() });
+          
+          setUsername(user);
+          setHostname(host);
+          
+          // Prompt'u güncelle
+          promptRef.current = `${user}@${host}:~$ `;
+          
+          // Eğer terminal varsa prompt'u güncelle
+          if (terminal) {
+            terminal.write('\r\n' + promptRef.current);
+          }
+        } catch (error) {
+          console.error('Error getting user info:', error);
+          setUsername('user');
+          setHostname('localhost');
+          promptRef.current = 'user@localhost:~$ ';
+        }
+      }
+    };
+    getUserInfo();
+  }, [currentContext]);
 
-      if (terminalContainerRef.current) {
+  // Terminal'i yeniden oluşturmak için value değiştiğinde kontrol et
+  useEffect(() => {
+    if (value === 0) {  // Terminal tab'ı seçiliyse
+      if (!terminal && terminalContainerRef.current) {
+        const term = new Terminal({
+          cursorBlink: true,
+          fontSize: 14,
+          fontFamily: 'Menlo, Monaco, monospace',
+          theme: {
+            background: '#1e1e1e',
+            foreground: '#ffffff',
+            cursor: '#ffffff',
+            selection: '#5DA5D533'
+          },
+          convertEol: true,
+          cursorStyle: 'block'
+        });
+
+        const fitAddon = new FitAddon();
+        term.loadAddon(fitAddon);
+
         term.open(terminalContainerRef.current);
         fitAddon.fit();
         
-        // Başlangıç prompt'unu göster
-        term.write('\r\n$ ');
+        // Prompt'u hazırla
+        const prompt = selectedResource?.kind === 'Pod' 
+          ? `${selectedResource.metadata.namespace}/${selectedResource.metadata.name}:/ $ `
+          : promptRef.current;
+
+        console.log('Using prompt:', prompt);
+        term.write('\r\n' + prompt);
 
         let currentLine = '';
         let commandHistory = [];
@@ -74,13 +133,15 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
 
           if (domEvent.keyCode === 13) { // Enter
             if (currentLine.trim()) {
-              // Komutu çalıştır
-              executeCommand(currentLine.trim(), term);
               commandHistory.push(currentLine);
               historyIndex = commandHistory.length;
+              executeCommand(currentLine, term).then(() => {
+                term.write('\r\n' + promptRef.current);
+              });
+              currentLine = '';
+            } else {
+              term.write('\r\n' + promptRef.current);
             }
-            currentLine = '';
-            term.write('\r\n$ ');
           } else if (domEvent.keyCode === 8) { // Backspace
             if (currentLine.length > 0) {
               currentLine = currentLine.slice(0, -1);
@@ -89,18 +150,14 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
           } else if (domEvent.keyCode === 38) { // Up arrow
             if (historyIndex > 0) {
               historyIndex--;
-              // Mevcut satırı temizle
-              term.write('\r$ ' + ' '.repeat(currentLine.length) + '\r$ ');
               currentLine = commandHistory[historyIndex];
-              term.write(currentLine);
+              term.write('\r' + promptRef.current + currentLine);
             }
           } else if (domEvent.keyCode === 40) { // Down arrow
-            if (historyIndex < commandHistory.length) {
+            if (historyIndex < commandHistory.length - 1) {
               historyIndex++;
-              // Mevcut satırı temizle
-              term.write('\r$ ' + ' '.repeat(currentLine.length) + '\r$ ');
-              currentLine = commandHistory[historyIndex] || '';
-              term.write(currentLine);
+              currentLine = commandHistory[historyIndex];
+              term.write('\r' + promptRef.current + currentLine);
             }
           } else if (printable) {
             currentLine += key;
@@ -110,12 +167,21 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
 
         setTerminal(term);
       }
-
-      return () => {
-        term.dispose();
-      };
+    } else {
+      // Terminal tab'ından çıkıldığında terminal'i temizle
+      if (terminal) {
+        terminal.dispose();
+        setTerminal(null);
+      }
     }
-  }, [value, selectedResource]);
+
+    return () => {
+      if (terminal) {
+        terminal.dispose();
+        setTerminal(null);
+      }
+    };
+  }, [value, selectedResource, currentContext]); // value değişimini izle
 
   useEffect(() => {
     if (selectedResource) {
@@ -177,16 +243,38 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
 
   const executeCommand = async (command, term) => {
     try {
-      const result = await ipcRenderer.invoke('exec-command', {
-        command: command,
-        namespace: selectedResource?.metadata?.namespace,
-        podName: selectedResource?.metadata?.name,
-        context: currentContext
+      // Debug için
+      console.log('Executing command with context:', {
+        command,
+        currentContext,
+        selectedResource
       });
 
-      term.write('\r\n' + result);
+      // Özel komutları işle
+      if (command === 'clear') {
+        term.clear();
+        return;
+      }
+
+      // CD komutunu işle
+      if (command.startsWith('cd ')) {
+        term.write('\r\n' + `Cannot change directory in web terminal`);
+        return;
+      }
+
+      const result = await ipcRenderer.invoke('exec-command', {
+        command,
+        namespace: selectedResource?.metadata?.namespace,
+        podName: selectedResource?.metadata?.name,
+        context: currentContext // Tüm context objesini gönder
+      });
+
+      if (result) {
+        term.write('\r\n' + result);
+      }
     } catch (error) {
-      term.write('\r\n' + error.message);
+      console.error('Terminal command error:', error);
+      term.write('\r\n\x1b[31m' + error.message + '\x1b[0m');
     }
   };
 
@@ -249,7 +337,6 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
             <Tab 
               icon={<Icons.Terminal />} 
               label="Terminal" 
-              disabled={!selectedResource || selectedResource.kind !== 'Pod'} 
             />
             <Tab icon={<Icons.Code />} label="YAML Editor" />
           </Tabs>
@@ -265,24 +352,18 @@ function BottomPanel({ selectedResource, currentContext, onClose, onResourceUpda
             hidden={value !== 0}
             sx={{ height: '100%', display: value === 0 ? 'flex' : 'none' }}
           >
-            {selectedResource?.kind === 'Pod' ? (
-              <Box 
-                ref={terminalContainerRef}
-                sx={{ 
-                  p: 1, 
-                  backgroundColor: '#1e1e1e',
-                  color: '#fff',
-                  flexGrow: 1,
-                  '& .xterm': {
-                    height: '100%'
-                  }
-                }}
-              />
-            ) : (
-              <Box sx={{ p: 2 }}>
-                <Typography>Select a pod to use terminal</Typography>
-              </Box>
-            )}
+            <Box 
+              ref={terminalContainerRef}
+              sx={{ 
+                p: 1, 
+                backgroundColor: '#1e1e1e',
+                color: '#fff',
+                flexGrow: 1,
+                '& .xterm': {
+                  height: '100%'
+                }
+              }}
+            />
           </Box>
 
           {/* YAML Editor Tab */}

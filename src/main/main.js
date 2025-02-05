@@ -505,33 +505,74 @@ ipcMain.handle('apply-yaml', async (event, { yamlContent, context }) => {
   }
 });
 
-// Komut çalıştırma handler'ı
-ipcMain.handle('exec-command', async (event, { command, namespace, podName }) => {
+// Terminal komutları için handler
+ipcMain.handle('exec-command', async (event, { command, namespace, podName, context }) => {
   try {
-    // Eğer komut kubectl ile başlamıyorsa, otomatik olarak ekle
-    if (!command.startsWith('kubectl')) {
-      if (podName) {
-        // Pod seçiliyse, pod içinde komut çalıştır
-        command = `kubectl exec -n ${namespace} ${podName} -- ${command}`;
-      } else {
-        // Pod seçili değilse, normal kubectl komutu çalıştır
-        command = `kubectl ${command}`;
-      }
+    debugLog('Executing command:', { command, namespace, podName, context });
+
+    const { exec } = require('child_process');
+
+    // Pod seçili değilse direkt host komutunu çalıştır
+    if (!podName) {
+      return new Promise((resolve, reject) => {
+        // Windows ve Unix için farklı komutlar
+        let finalCommand = command;
+        if (command === 'whoami') {
+          finalCommand = process.platform === 'win32' ? 'echo %USERNAME%' : 'whoami';
+        } else if (command === 'hostname') {
+          finalCommand = process.platform === 'win32' ? 'hostname' : 'hostname';
+        }
+
+        debugLog('Executing host command:', { finalCommand, context });
+
+        exec(finalCommand, {
+          shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
+          env: { ...process.env, TERM: 'xterm-256color' }
+        }, (error, stdout, stderr) => {
+          if (error) {
+            debugLog('Command error:', error);
+            reject(new Error(stderr || error.message));
+            return;
+          }
+          const output = stdout.toString().trim();
+          debugLog('Command output:', { output, context });
+          resolve(output);
+        });
+      });
     }
 
-    // Komutu çalıştır
-    const { exec } = require('child_process');
-    return new Promise((resolve, reject) => {
-      exec(command, (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(stderr || error.message));
-          return;
-        }
-        resolve(stdout);
+    // Pod seçiliyse pod içinde çalıştır
+    if (podName) {
+      // Önce context'i değiştir
+      if (context?.name) {
+        await new Promise((resolve, reject) => {
+          exec(`kubectl config use-context ${context.name}`, (error, stdout) => {
+            if (error) {
+              debugLog('Error switching context:', error);
+              reject(error);
+              return;
+            }
+            resolve(stdout);
+          });
+        });
+      }
+
+      const podCommand = `kubectl exec -n ${namespace} ${podName} -- ${command}`;
+      debugLog('Executing pod command:', podCommand);
+
+      return new Promise((resolve, reject) => {
+        exec(podCommand, (error, stdout, stderr) => {
+          if (error) {
+            debugLog('Pod command error:', error);
+            reject(new Error(stderr || error.message));
+            return;
+          }
+          resolve(stdout);
+        });
       });
-    });
+    }
   } catch (error) {
-    console.error('Error executing command:', error);
+    debugLog('Error executing command:', error);
     throw error;
   }
 }); 
