@@ -5,10 +5,15 @@ const k8s = require('@kubernetes/client-node');
 const fs = require('fs');
 const os = require('os');
 const YAML = require('yaml');
+const { exec } = require('child_process');
 
 const store = new Store();
 
 let mainWindow = null;  // mainWindow'u global olarak tutuyoruz
+
+// Kubernetes istemci yönetimi için global değişkenler
+let k8sConfig = null;
+let k8sApi = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -122,45 +127,56 @@ ipcMain.handle('get-local-kubeconfig', async () => {
   }
 });
 
-// Kubernetes API çağrıları için yardımcı fonksiyon
-const setupKubeConfig = (context) => {
+// Kubernetes bağlantısını kur
+async function setupKubernetesClient(contextConfig) {
   try {
-    const kc = new k8s.KubeConfig();
-    
-    // Context bir string ise (eski kod için geriye uyumluluk)
-    if (typeof context === 'string') {
-      kc.loadFromString(context);
-      return kc;
+    if (!contextConfig?.config) {
+      throw new Error('Invalid context configuration');
     }
 
-    // Context bir obje ise ve config varsa
-    if (context && context.config) {
-      kc.loadFromString(context.config);
-      
-      // Eğer context.name varsa o context'i kullan
-      if (context.name) {
-        try {
-          kc.setCurrentContext(context.name);
-        } catch (error) {
-          console.error('Error setting context:', error);
-        }
-      }
-      return kc;
+    k8sConfig = new k8s.KubeConfig();
+    k8sConfig.loadFromString(contextConfig.config);
+
+    if (contextConfig.name) {
+      k8sConfig.setCurrentContext(contextConfig.name);
     }
 
-    throw new Error('Invalid context configuration');
+    // API istemcilerini oluştur
+    k8sApi = {
+      core: k8sConfig.makeApiClient(k8s.CoreV1Api),
+      apps: k8sConfig.makeApiClient(k8s.AppsV1Api),
+      batch: k8sConfig.makeApiClient(k8s.BatchV1Api),
+      networking: k8sConfig.makeApiClient(k8s.NetworkingV1Api)
+    };
+
+    // Timeout ve retry ayarları
+    const defaultOptions = {
+      timeout: 10000,
+      maxRedirects: 5,
+      validateStatus: status => status >= 200 && status < 300
+    };
+
+    Object.values(k8sApi).forEach(client => {
+      client.apiClient.defaultOptions = {
+        ...client.apiClient.defaultOptions,
+        ...defaultOptions
+      };
+    });
+
+    // Test bağlantısı
+    await k8sApi.core.listNamespace();
+    return true;
   } catch (error) {
-    console.error('Error in setupKubeConfig:', error);
-    throw error;
+    console.error('Error setting up Kubernetes client:', error);
+    return false;
   }
-};
+}
 
-// Kubernetes işlemleri
+// IPC handlers
 ipcMain.handle('get-pods', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listPodForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listPodForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching pods:', error);
@@ -170,9 +186,8 @@ ipcMain.handle('get-pods', async (event, context) => {
 
 ipcMain.handle('get-deployments', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.AppsV1Api);
-    const response = await k8sApi.listDeploymentForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.apps.listDeploymentForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching deployments:', error);
@@ -182,9 +197,8 @@ ipcMain.handle('get-deployments', async (event, context) => {
 
 ipcMain.handle('get-services', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listServiceForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listServiceForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching services:', error);
@@ -194,9 +208,8 @@ ipcMain.handle('get-services', async (event, context) => {
 
 ipcMain.handle('get-configmaps', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listConfigMapForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listConfigMapForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching configmaps:', error);
@@ -206,9 +219,8 @@ ipcMain.handle('get-configmaps', async (event, context) => {
 
 ipcMain.handle('get-secrets', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listSecretForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listSecretForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching secrets:', error);
@@ -218,9 +230,8 @@ ipcMain.handle('get-secrets', async (event, context) => {
 
 ipcMain.handle('get-pvs', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listPersistentVolume();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listPersistentVolume();
     return response.body;
   } catch (error) {
     console.error('Error fetching persistent volumes:', error);
@@ -231,8 +242,8 @@ ipcMain.handle('get-pvs', async (event, context) => {
 // Helm Releases
 ipcMain.handle('get-helm-releases', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CustomObjectsApi);
+    await setupKubernetesClient(context);
+    const k8sApi = k8s.CustomObjectsApi.makeApiClient(k8sConfig);
     
     // Helm v3 releases için
     try {
@@ -245,7 +256,7 @@ ipcMain.handle('get-helm-releases', async (event, context) => {
     } catch (helmError) {
       console.log('Trying alternative Helm API...');
       // Alternatif olarak namespace bazlı sorgu
-      const namespaces = await kc.makeApiClient(k8s.CoreV1Api).listNamespace();
+      const namespaces = await k8sApi.listNamespace();
       const releases = [];
       
       for (const ns of namespaces.body.items) {
@@ -273,8 +284,8 @@ ipcMain.handle('get-helm-releases', async (event, context) => {
 // Helm Charts (Optional - Helm repository'lerindeki mevcut chart'ları listelemek için)
 ipcMain.handle('get-helm-charts', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CustomObjectsApi);
+    await setupKubernetesClient(context);
+    const k8sApi = k8s.CustomObjectsApi.makeApiClient(k8sConfig);
     
     try {
       const response = await k8sApi.listClusterCustomObject(
@@ -296,9 +307,8 @@ ipcMain.handle('get-helm-charts', async (event, context) => {
 // StatefulSets
 ipcMain.handle('get-statefulsets', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.AppsV1Api);
-    const response = await k8sApi.listStatefulSetForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.apps.listStatefulSetForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching statefulsets:', error);
@@ -309,9 +319,8 @@ ipcMain.handle('get-statefulsets', async (event, context) => {
 // DaemonSets
 ipcMain.handle('get-daemonsets', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.AppsV1Api);
-    const response = await k8sApi.listDaemonSetForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.apps.listDaemonSetForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching daemonsets:', error);
@@ -322,9 +331,8 @@ ipcMain.handle('get-daemonsets', async (event, context) => {
 // Ingresses
 ipcMain.handle('get-ingresses', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.NetworkingV1Api);
-    const response = await k8sApi.listIngressForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.networking.listIngressForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching ingresses:', error);
@@ -335,9 +343,8 @@ ipcMain.handle('get-ingresses', async (event, context) => {
 // PersistentVolumeClaims
 ipcMain.handle('get-pvcs', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listPersistentVolumeClaimForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listPersistentVolumeClaimForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching pvcs:', error);
@@ -348,9 +355,8 @@ ipcMain.handle('get-pvcs', async (event, context) => {
 // CronJobs
 ipcMain.handle('get-cronjobs', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.BatchV1Api);
-    const response = await k8sApi.listCronJobForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.batch.listCronJobForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching cronjobs:', error);
@@ -361,9 +367,8 @@ ipcMain.handle('get-cronjobs', async (event, context) => {
 // Jobs
 ipcMain.handle('get-jobs', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.BatchV1Api);
-    const response = await k8sApi.listJobForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.batch.listJobForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching jobs:', error);
@@ -374,9 +379,8 @@ ipcMain.handle('get-jobs', async (event, context) => {
 // Events
 ipcMain.handle('get-events', async (event, context) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    const response = await k8sApi.listEventForAllNamespaces();
+    await setupKubernetesClient(context);
+    const response = await k8sApi.core.listEventForAllNamespaces();
     return response.body;
   } catch (error) {
     console.error('Error fetching events:', error);
@@ -387,10 +391,8 @@ ipcMain.handle('get-events', async (event, context) => {
 // Pod'da komut çalıştırma
 ipcMain.handle('exec-in-pod', async (event, { namespace, podName, command, context }) => {
   try {
-    const kc = setupKubeConfig(context);
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
-    
-    const exec = new k8s.Exec(kc);
+    await setupKubernetesClient(context);
+    const exec = new k8s.Exec(k8sConfig);
     const result = await exec.exec(
       namespace,
       podName,
@@ -429,7 +431,6 @@ ipcMain.handle('apply-yaml', async (event, { yamlContent, context }) => {
     }
 
     // Önce kubectl ile context'i değiştir
-    const { exec } = require('child_process');
     await new Promise((resolve, reject) => {
       exec(`kubectl config use-context ${context.name}`, (error, stdout, stderr) => {
         if (error) {
@@ -505,74 +506,118 @@ ipcMain.handle('apply-yaml', async (event, { yamlContent, context }) => {
   }
 });
 
-// Terminal komutları için handler
-ipcMain.handle('exec-command', async (event, { command, namespace, podName, context }) => {
+// Komut çalıştırma handler'ı
+ipcMain.handle('exec-command', async (event, { command, context }) => {
   try {
-    debugLog('Executing command:', { command, namespace, podName, context });
-
-    const { exec } = require('child_process');
-
-    // Pod seçili değilse direkt host komutunu çalıştır
-    if (!podName) {
-      return new Promise((resolve, reject) => {
-        // Windows ve Unix için farklı komutlar
-        let finalCommand = command;
-        if (command === 'whoami') {
-          finalCommand = process.platform === 'win32' ? 'echo %USERNAME%' : 'whoami';
-        } else if (command === 'hostname') {
-          finalCommand = process.platform === 'win32' ? 'hostname' : 'hostname';
-        }
-
-        debugLog('Executing host command:', { finalCommand, context });
-
-        exec(finalCommand, {
-          shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash',
-          env: { ...process.env, TERM: 'xterm-256color' }
-        }, (error, stdout, stderr) => {
+    // Önce kubectl context'i değiştir
+    if (context?.name) {
+      await new Promise((resolve, reject) => {
+        exec(`kubectl config use-context "${context.name}"`, (error, stdout, stderr) => {
           if (error) {
-            debugLog('Command error:', error);
-            reject(new Error(stderr || error.message));
-            return;
-          }
-          const output = stdout.toString().trim();
-          debugLog('Command output:', { output, context });
-          resolve(output);
-        });
-      });
-    }
-
-    // Pod seçiliyse pod içinde çalıştır
-    if (podName) {
-      // Önce context'i değiştir
-      if (context?.name) {
-        await new Promise((resolve, reject) => {
-          exec(`kubectl config use-context ${context.name}`, (error, stdout) => {
-            if (error) {
-              debugLog('Error switching context:', error);
-              reject(error);
-              return;
-            }
-            resolve(stdout);
-          });
-        });
-      }
-
-      const podCommand = `kubectl exec -n ${namespace} ${podName} -- ${command}`;
-      debugLog('Executing pod command:', podCommand);
-
-      return new Promise((resolve, reject) => {
-        exec(podCommand, (error, stdout, stderr) => {
-          if (error) {
-            debugLog('Pod command error:', error);
-            reject(new Error(stderr || error.message));
+            console.error('Error switching context:', error);
+            reject(error);
             return;
           }
           resolve(stdout);
         });
       });
     }
+
+    // Komutu çalıştır
+    return new Promise((resolve, reject) => {
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          console.error('Command execution error:', error);
+          reject(error);
+          return;
+        }
+        resolve(stdout || stderr);
+      });
+    });
   } catch (error) {
-    debugLog('Error executing command:', error);
+    console.error('Error in exec-command:', error);
+    throw error;
+  }
+});
+
+// Bağlantı testi için handler
+ipcMain.handle('test-connection', async (event, context) => {
+  try {
+    await setupKubernetesClient(context);
+    // Basit bir API çağrısı yap
+    await k8sApi.core.listNamespace();
+    return true;
+  } catch (error) {
+    console.error('Connection test failed:', error);
+    throw new Error(
+      `Kubernetes cluster'a bağlanılamadı: ${error.message}\n` +
+      `Cluster: ${context?.cluster}\n` +
+      `User: ${context?.user}\n` +
+      `Context: ${context?.name}`
+    );
+  }
+});
+
+// Pod loglarını getir
+ipcMain.handle('get-logs', async (event, { namespace, name, context }) => {
+  try {
+    await setupKubernetesClient(context);
+    
+    // Kubectl ile logları al
+    return new Promise((resolve, reject) => {
+      exec(`kubectl logs -n ${namespace} ${name}`, (error, stdout, stderr) => {
+        if (error) {
+          console.error('Error getting logs:', error);
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      });
+    });
+  } catch (error) {
+    console.error('Error in get-logs:', error);
+    throw error;
+  }
+});
+
+// Pod silme handler'ı
+ipcMain.handle('delete-resource', async (event, { namespace, name, kind, context }) => {
+  try {
+    await setupKubernetesClient(context);
+    
+    return new Promise((resolve, reject) => {
+      exec(`kubectl delete ${kind.toLowerCase()} -n ${namespace} ${name}`, (error, stdout, stderr) => {
+        if (error) {
+          console.error('Error deleting resource:', error);
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      });
+    });
+  } catch (error) {
+    console.error('Error in delete-resource:', error);
+    throw error;
+  }
+});
+
+// Pod'a shell bağlantısı
+ipcMain.handle('exec-shell', async (event, { namespace, name, context }) => {
+  try {
+    await setupKubernetesClient(context);
+    
+    return new Promise((resolve, reject) => {
+      exec(`kubectl exec -it -n ${namespace} ${name} -- /bin/sh`, (error, stdout, stderr) => {
+        if (error) {
+          console.error('Error executing shell:', error);
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      });
+    });
+  } catch (error) {
+    console.error('Error in exec-shell:', error);
     throw error;
   }
 }); 

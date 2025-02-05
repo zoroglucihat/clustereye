@@ -16,7 +16,12 @@ import {
   Select,
   MenuItem,
   InputAdornment,
-  Button
+  Button,
+  Menu,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  IconButton
 } from '@mui/material';
 import * as Icons from '@mui/icons-material';
 import ResourceDetails from './ResourceDetails';
@@ -56,6 +61,10 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
   const [namespaces, setNamespaces] = useState([]);
   const [showBottomPanel, setShowBottomPanel] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [logs, setLogs] = useState(null);
+  const [logsDialog, setLogsDialog] = useState(false);
 
   useEffect(() => {
     if (config) {
@@ -185,6 +194,42 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
     setSelectedResource(resource);
   };
 
+  // Context menu için
+  const handleContextMenu = (event, resource) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setAnchorEl(event.currentTarget);
+    setSelectedItem(resource);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+    setSelectedItem(null);
+  };
+
+  // Log görüntüleme
+  const handleViewLogs = async () => {
+    try {
+      const logs = await ipcRenderer.invoke('get-logs', {
+        namespace: selectedItem.metadata.namespace,
+        name: selectedItem.metadata.name,
+        context: currentContext
+      });
+      setLogs(logs);
+      setLogsDialog(true);
+    } catch (error) {
+      console.error('Error fetching logs:', error);
+      alert('Loglar alınamadı: ' + error.message);
+    }
+    handleMenuClose();
+  };
+
+  // YAML düzenleme
+  const handleEdit = () => {
+    onResourceSelect(selectedItem);
+    handleMenuClose();
+  };
+
   const renderResourceList = (resources, getSecondaryText) => (
     <List>
       {resources.map((resource) => (
@@ -250,8 +295,100 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
               </Box>
             </Box>
           </ListItemButton>
+          
+          {/* Actions Butonu */}
+          <Box sx={{ pr: 2 }}>
+            <Button
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                setAnchorEl(e.currentTarget);
+                setSelectedItem(resource);
+              }}
+              endIcon={<Icons.ArrowDropDown />}
+            >
+              Actions
+            </Button>
+          </Box>
         </ListItem>
       ))}
+
+      {/* Actions Menu */}
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleMenuClose}
+      >
+        <MenuItem onClick={handleEdit}>
+          <ListItemIcon>
+            <Icons.Edit fontSize="small" />
+          </ListItemIcon>
+          YAML Düzenle
+        </MenuItem>
+        {selectedItem?.kind === 'Pod' && (
+          <>
+            <MenuItem onClick={handleViewLogs}>
+              <ListItemIcon>
+                <Icons.Article fontSize="small" />
+              </ListItemIcon>
+              Logları Görüntüle
+            </MenuItem>
+            <MenuItem onClick={handleExecShell}>
+              <ListItemIcon>
+                <Icons.Terminal fontSize="small" />
+              </ListItemIcon>
+              Terminal'e Bağlan
+            </MenuItem>
+            <MenuItem onClick={handleDelete}>
+              <ListItemIcon>
+                <Icons.Delete fontSize="small" color="error" />
+              </ListItemIcon>
+              <Typography color="error">Sil</Typography>
+            </MenuItem>
+          </>
+        )}
+      </Menu>
+
+      {/* Logs Dialog */}
+      <Dialog
+        open={logsDialog}
+        onClose={() => setLogsDialog(false)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Icons.Article />
+            Logs: {selectedItem?.metadata.name}
+            <Chip 
+              size="small" 
+              label={selectedItem?.metadata.namespace}
+              sx={{ ml: 1 }}
+            />
+          </Box>
+          <IconButton
+            onClick={() => setLogsDialog(false)}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <Icons.Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <Box
+            sx={{
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              bgcolor: 'background.paper',
+              p: 2,
+              borderRadius: 1,
+              maxHeight: '70vh',
+              overflow: 'auto'
+            }}
+          >
+            {logs}
+          </Box>
+        </DialogContent>
+      </Dialog>
     </List>
   );
 
