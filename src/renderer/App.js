@@ -32,30 +32,99 @@ const darkTheme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: '#90caf9',  // Daha açık bir mavi
+      main: '#6366f1', // Modern indigo
+      light: '#818cf8',
+      dark: '#4f46e5',
     },
     secondary: {
-      main: '#f48fb1',  // Pembe tonu
+      main: '#10b981', // Modern yeşil
+      light: '#34d399',
+      dark: '#059669',
     },
     background: {
-      default: '#0a1929',  // Koyu lacivert
-      paper: '#132f4c',    // Biraz daha açık lacivert
+      default: '#0f172a', // Koyu slate
+      paper: '#1e293b',   // Biraz daha açık slate
+    },
+    error: {
+      main: '#ef4444',
+    },
+    warning: {
+      main: '#f59e0b',
+    },
+    success: {
+      main: '#10b981',
+    },
+    info: {
+      main: '#3b82f6',
+    },
+    text: {
+      primary: '#f1f5f9',
+      secondary: '#94a3b8',
     },
   },
   components: {
-    MuiPaper: {
-      styleOverrides: {
-        root: {
-          backgroundImage: 'none',  // Gradient'i kaldır
-        },
-      },
-    },
     MuiAppBar: {
       styleOverrides: {
         root: {
-          backgroundColor: '#132f4c',  // AppBar rengi
+          backgroundColor: '#1e293b', // AppBar rengi
+          backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05))',
         },
       },
+    },
+    MuiDrawer: {
+      styleOverrides: {
+        paper: {
+          backgroundColor: '#1e293b', // Drawer rengi
+          backgroundImage: 'none',
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+          '&.MuiDialog-paper': {
+            backgroundColor: '#1e293b',
+          },
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none', // Butonlarda büyük harf kullanma
+        },
+        containedPrimary: {
+          background: 'linear-gradient(45deg, #6366f1 30%, #818cf8 90%)',
+          '&:hover': {
+            background: 'linear-gradient(45deg, #4f46e5 30%, #6366f1 90%)',
+          },
+        },
+      },
+    },
+    MuiListItemButton: {
+      styleOverrides: {
+        root: {
+          '&.Mui-selected': {
+            backgroundColor: 'rgba(99, 102, 241, 0.15)',
+            '&:hover': {
+              backgroundColor: 'rgba(99, 102, 241, 0.25)',
+            },
+          },
+        },
+      },
+    },
+  },
+  shape: {
+    borderRadius: 8,
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    h6: {
+      fontWeight: 600,
+    },
+    button: {
+      fontWeight: 600,
     },
   },
 });
@@ -229,14 +298,7 @@ function App() {
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
       <Box sx={{ display: 'flex' }}>
-        <AppBar
-          position="fixed"
-          sx={{
-            width: { sm: `calc(100% - ${DRAWER_WIDTH}px)` },
-            ml: { sm: `${DRAWER_WIDTH}px` },
-          }}
-          elevation={0}
-        >
+        <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
           <Toolbar>
             <IconButton
               color="inherit"
@@ -246,8 +308,9 @@ function App() {
             >
               <Icons.Menu />
             </IconButton>
-            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              KubeSucker
+            <Icons.Visibility sx={{ mr: 1 }} />
+            <Typography variant="h6" noWrap component="div">
+              ClusterEyeAI
             </Typography>
           </Toolbar>
         </AppBar>

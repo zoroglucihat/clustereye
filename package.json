@@ -1,5 +1,5 @@
 {
-  "name": "kubesucker",
+  "name": "cluster-eye-ai",
   "version": "1.0.0",
   "main": "src/main/main.js",
   "scripts": {
@@ -46,8 +46,8 @@
     "webpack-dev-server": "^4.15.1"
   },
   "build": {
-    "appId": "com.kubesucker.app",
-    "productName": "KubeSucker",
+    "appId": "com.clustereyeai.app",
+    "productName": "ClusterEyeAI",
     "directories": {
       "output": "dist"
     },
