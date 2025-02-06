@@ -27,6 +27,7 @@ function ResourceDetails({ open, onClose, resource }) {
   if (!resource) return null;
 
   const handleTabChange = (event, newValue) => {
+    console.log(newValue);
     setTabValue(newValue);
   };
 

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
 const k8s = require('@kubernetes/client-node');
@@ -12,6 +12,7 @@ const OpenAI = require('openai');
 const store = new Store();
 
 let mainWindow = null;  // mainWindow'u global olarak tutuyoruz
+let kc;
 
 // Kubernetes istemci yönetimi için global değişkenler
 let k8sConfig = null;
@@ -24,6 +25,9 @@ const openai = new OpenAI({
 });
 
 function createWindow() {
+  // Debug için bekleme noktası
+  debugger;
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -41,11 +45,32 @@ function createWindow() {
     }
   });
 
+  // Kubernetes yapılandırması için debug noktası
+  debugger;
+  try {
+    // Önce varsayılan kubeconfig dosyasını yükle
+    kc = new k8s.KubeConfig();
+    kc.loadFromDefault();
+  } catch (error) {
+    console.error('Error loading default kubeconfig:', error);
+    // Varsayılan yükleme başarısız olursa $HOME/.kube/config'i dene
+    try {
+      const kubeConfigPath = path.join(os.homedir(), '.kube', 'config');
+      kc = new k8s.KubeConfig();
+      kc.loadFromFile(kubeConfigPath);
+    } catch (err) {
+      console.error('Error loading kubeconfig from file:', err);
+    }
+  }
+
+  // Kubernetes API client'larını oluştur
+  k8sApi = kc ? kc.makeApiClient(k8s.CoreV1Api) : null;
+  const k8sAppsApi = kc ? kc.makeApiClient(k8s.AppsV1Api) : null;
+
   // DevTools'u her zaman aç
   mainWindow.webContents.openDevTools();
 
   // Clipboard erişimi için menü oluştur
-  const { Menu } = require('electron');
   const template = [
     {
       label: 'Edit',
@@ -62,6 +87,25 @@ function createWindow() {
   ];
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+
+  // IPC handlers
+  ipcMain.handle('get-contexts', () => {
+    try {
+      return kc ? kc.getContexts() : [];
+    } catch (error) {
+      console.error('Error getting contexts:', error);
+      return [];
+    }
+  });
+
+  ipcMain.handle('get-current-context', () => {
+    try {
+      return kc ? kc.getCurrentContext() : null;
+    } catch (error) {
+      console.error('Error getting current context:', error);
+      return null;
+    }
+  });
 
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:8080/index.html');
@@ -138,6 +182,9 @@ ipcMain.handle('get-local-kubeconfig', async () => {
 
 // Kubernetes bağlantısını kur
 async function setupKubernetesClient(contextConfig) {
+  // Debug için bekleme noktası
+  debugger;
+  
   try {
     if (!contextConfig?.config) {
       throw new Error('Invalid context configuration');
@@ -158,26 +205,29 @@ async function setupKubernetesClient(contextConfig) {
       networking: k8sConfig.makeApiClient(k8s.NetworkingV1Api)
     };
 
-    // Timeout ve retry ayarları
-    const defaultOptions = {
+    // Temel yapılandırma ayarları
+    const defaultRequestOptions = {
       timeout: 10000,
-      maxRedirects: 5,
-      validateStatus: status => status >= 200 && status < 300
+      maxRedirects: 5
     };
 
-    Object.values(k8sApi).forEach(client => {
-      client.apiClient.defaultOptions = {
-        ...client.apiClient.defaultOptions,
-        ...defaultOptions
-      };
-    });
+    // Her bir API istemcisi için yapılandırmayı ayarla
+    for (const [key, client] of Object.entries(k8sApi)) {
+      try {
+        if (client && typeof client.setDefaultOptions === 'function') {
+          client.setDefaultOptions(defaultRequestOptions);
+        }
+      } catch (err) {
+        console.warn(`Warning: Could not set default options for ${key} client`, err);
+      }
+    }
 
     // Test bağlantısı
     await k8sApi.core.listNamespace();
     return true;
   } catch (error) {
     console.error('Error setting up Kubernetes client:', error);
-    return false;
+    throw error;
   }
 }
 

@@ -10,7 +10,7 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'public'),
     filename: 'bundle.js',
-    publicPath: '/'
+    publicPath: './'
   },
   module: {
     rules: [
@@ -30,7 +30,11 @@ module.exports = {
         use: ['style-loader', 'css-loader']
       },
       {
-        test: /\.ttf$/,
+        test: /\.(png|svg|jpg|jpeg|gif)$/i,
+        type: 'asset/resource'
+      },
+      {
+        test: /\.(woff|woff2|eot|ttf|otf)$/i,
         type: 'asset/resource'
       }
     ]
@@ -48,7 +52,8 @@ module.exports = {
       filename: 'index.html'
     }),
     new MonacoWebpackPlugin({
-      languages: ['yaml', 'json']
+      languages: ['javascript', 'typescript', 'yaml'],
+      filename: '[name].worker.js'
     }),
     new CopyWebpackPlugin({
       patterns: [
@@ -61,15 +66,13 @@ module.exports = {
   ],
   devServer: {
     static: {
-      directory: path.join(__dirname, 'public'),
-      publicPath: '/'
+      directory: path.join(__dirname, 'public')
     },
     port: 8080,
-    hot: false,
-    historyApiFallback: true,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* data: blob:"
+    hot: true,
+    devMiddleware: {
+      writeToDisk: true
     }
-  }
+  },
+  devtool: 'source-map'
 }; 
