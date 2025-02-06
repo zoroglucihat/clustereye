@@ -16,7 +16,7 @@ import {
   Alert
 } from '@mui/material';
 import * as Icons from '@mui/icons-material';
-import { Editor } from '@monaco-editor/react';
+import Editor from '@monaco-editor/react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import * as monaco from 'monaco-editor';
