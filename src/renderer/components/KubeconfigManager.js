@@ -13,7 +13,8 @@ import {
   DialogActions,
   Typography,
   Divider,
-  Chip
+  Chip,
+  Alert
 } from '@mui/material';
 import ClusterResources from './ClusterResources';
 const k8s = window.require('@kubernetes/client-node');
@@ -31,6 +32,7 @@ function KubeconfigManager({ configs, onConfigSelect, onConfigsUpdate }) {
     const saved = localStorage.getItem('selectedContext');
     return saved ? JSON.parse(saved) : null;
   });
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     loadLocalKubeconfig();
@@ -61,9 +63,36 @@ function KubeconfigManager({ configs, onConfigSelect, onConfigsUpdate }) {
     setConfig('');
   };
 
-  const handleLocalContextSelect = (context) => {
+  const handleContextSwitch = async (context) => {
+    try {
+      // Context değiştirme işlemini başlat
+      const result = await ipcRenderer.invoke('switch-context', context);
+
+      if (result.success) {
+        // Bağlantı başarılı
+        setActiveContext(context);
+        onConfigSelect(context);
+      } else {
+        // Bağlantı başarısız - hata dialogu göster
+        setError({
+          title: 'Connection Failed',
+          message: result.message,
+          details: `Cluster: ${result.details.cluster}\nUser: ${result.details.user}\nError: ${result.details.error}`
+        });
+      }
+    } catch (error) {
+      console.error('Error switching context:', error);
+      setError({
+        title: 'Connection Error',
+        message: `Failed to switch to context "${context.name}"`,
+        details: error.message
+      });
+    }
+  };
+
+  const handleLocalContextSelect = async (context) => {
     if (!localConfig) {
-      console.error('Debug: No local config available');
+      console.error('No local config available');
       return;
     }
 
@@ -82,14 +111,15 @@ function KubeconfigManager({ configs, onConfigSelect, onConfigsUpdate }) {
         type: 'local'
       };
 
-      console.log('Debug: Setting context:', contextData);
-      
-      setActiveContext(contextData);
-      onConfigSelect(contextData);
+      await handleContextSwitch(contextData);
 
     } catch (error) {
-      console.error('Debug: Error in handleLocalContextSelect:', error);
-      alert('Failed to select context: ' + error.message);
+      console.error('Error in handleLocalContextSelect:', error);
+      setError({
+        title: 'Context Selection Error',
+        message: 'Failed to select context',
+        details: error.message
+      });
     }
   };
 
@@ -219,6 +249,42 @@ function KubeconfigManager({ configs, onConfigSelect, onConfigsUpdate }) {
           }
         }}
       />
+
+      {/* Hata Dialog'u */}
+      <Dialog 
+        open={!!error} 
+        onClose={() => setError(null)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ color: 'error.main' }}>
+          {error?.title}
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error?.message}
+          </Alert>
+          {error?.details && (
+            <Typography 
+              variant="body2" 
+              sx={{ 
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'monospace',
+                bgcolor: 'grey.900',
+                p: 2,
+                borderRadius: 1
+              }}
+            >
+              {error.details}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setError(null)}>
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

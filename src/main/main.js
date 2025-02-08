@@ -21,7 +21,6 @@ let k8sApi = null;
 // OpenAI istemcisi
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  baseURL: 'https://api.proxyapi.ai/openai/v1', // Claude için proxy URL
 });
 
 function createWindow() {
@@ -182,10 +181,22 @@ ipcMain.handle('get-local-kubeconfig', async () => {
 
 // Kubernetes bağlantısını kur
 async function setupKubernetesClient(contextConfig) {
-  // Debug için bekleme noktası
-  debugger;
-  
   try {
+    // Önceki API istemcilerini temizle
+    if (k8sApi) {
+      Object.values(k8sApi).forEach(client => {
+        if (client?.apiClient?.axios) {
+          // Axios instance'ını temizle
+          client.apiClient.axios.interceptors.request.clear();
+          client.apiClient.axios.interceptors.response.clear();
+        }
+      });
+    }
+    
+    // k8sApi'yi sıfırla
+    k8sApi = null;
+    k8sConfig = null;
+
     if (!contextConfig?.config) {
       throw new Error('Invalid context configuration');
     }
@@ -205,26 +216,65 @@ async function setupKubernetesClient(contextConfig) {
       networking: k8sConfig.makeApiClient(k8s.NetworkingV1Api)
     };
 
-    // Temel yapılandırma ayarları
+    // Request yapılandırması
     const defaultRequestOptions = {
       timeout: 10000,
-      maxRedirects: 5
+      maxRedirects: 5,
+      // DNS çözümleme hatası için retry mekanizması
+      retry: 3,
+      retryDelay: 1000,
+      // SSL/TLS ayarları
+      strictSSL: false,
+      rejectUnauthorized: false,
+      // Keep-alive ayarları
+      keepAlive: true,
+      keepAliveMsecs: 3000,
+      // Proxy ayarları (eğer gerekirse)
+      proxy: process.env.HTTPS_PROXY || process.env.HTTP_PROXY
     };
 
     // Her bir API istemcisi için yapılandırmayı ayarla
-    for (const [key, client] of Object.entries(k8sApi)) {
-      try {
-        if (client && typeof client.setDefaultOptions === 'function') {
-          client.setDefaultOptions(defaultRequestOptions);
-        }
-      } catch (err) {
-        console.warn(`Warning: Could not set default options for ${key} client`, err);
+    Object.values(k8sApi).forEach(client => {
+      if (client.apiClient) {
+        // Axios instance'ını yapılandır
+        client.apiClient.axios.defaults = {
+          ...client.apiClient.axios.defaults,
+          ...defaultRequestOptions,
+          validateStatus: (status) => status >= 200 && status < 300
+        };
+
+        // Retry interceptor'ı ekle
+        client.apiClient.axios.interceptors.response.use(undefined, async (err) => {
+          const config = err.config;
+          
+          // Retry sayacını kontrol et
+          if (!config || !config.retry || config._retryCount >= config.retry) {
+            return Promise.reject(err);
+          }
+
+          // Retry sayacını artır
+          config._retryCount = config._retryCount || 0;
+          config._retryCount++;
+
+          // Retry delay
+          await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+
+          // İsteği tekrar dene
+          return client.apiClient.axios(config);
+        });
       }
-    }
+    });
 
     // Test bağlantısı
-    await k8sApi.core.listNamespace();
-    return true;
+    try {
+      await k8sApi.core.listNamespace();
+      console.log('Successfully connected to cluster');
+      return true;
+    } catch (error) {
+      console.error('Connection test failed:', error);
+      throw new Error(`Failed to connect to cluster: ${error.message}`);
+    }
+
   } catch (error) {
     console.error('Error setting up Kubernetes client:', error);
     throw error;
@@ -684,39 +734,21 @@ ipcMain.handle('exec-shell', async (event, { namespace, name, context }) => {
 // AI Advisor handler
 ipcMain.handle('ask-advisor', async (event, { message, model, context }) => {
   try {
+    // Debug için log ekleyelim
+    console.log('Starting AI analysis with context:', {
+      contextName: context?.name,
+      model: model
+    });
+
+    // Cluster bilgilerini al
     const clusterInfo = await getClusterInfo(context);
-    
+
     const systemPrompt = `You are Second Eye Advisor, an expert Kubernetes cluster analyst.
-    
-    Your capabilities:
-    1. Analyze cluster health and performance
-    2. Identify potential issues and bottlenecks
-    3. Suggest optimizations and best practices
-    4. Explain complex Kubernetes concepts
-    5. Provide troubleshooting guidance
-    
-    Current cluster context:
-    - Name: ${context?.name}
-    - Cluster: ${context?.cluster}
-    - User: ${context?.user}
-
-    Detailed cluster information:
-    ${clusterInfo.summary}
-
-    Guidelines:
-    - Start with a brief summary of cluster health
-    - Highlight any critical issues or warnings
-    - Provide specific metrics and details
-    - Use markdown formatting for better readability
-    - Suggest specific improvements when relevant
-    - Include kubectl commands for verification when useful
-    - Be proactive in identifying potential problems
-    - Focus on security, performance, and reliability
-
-    Remember: You're helping manage a production Kubernetes cluster. Be precise and security-conscious.`;
+    Current cluster context: ${context?.name}
+    ${clusterInfo.summary}`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4", // veya model parametresine göre seç
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: message }
@@ -725,10 +757,15 @@ ipcMain.handle('ask-advisor', async (event, { message, model, context }) => {
       max_tokens: 1500
     });
 
+    if (!response.choices || !response.choices[0]?.message?.content) {
+      throw new Error('Invalid response from OpenAI');
+    }
+
     return response.choices[0].message.content;
+
   } catch (error) {
     console.error('Error in AI advisor:', error);
-    return `Error analyzing cluster: ${error.message}. Please try again.`;
+    throw new Error(`Connection error: ${error.message}. Please try again.`);
   }
 });
 
@@ -916,4 +953,45 @@ async function getClusterInfo(context) {
       details: null
     };
   }
-} 
+}
+
+// Context değiştirme ve bağlantı testi için handler
+ipcMain.handle('switch-context', async (event, context) => {
+  try {
+    console.log('Switching to context:', context?.name);
+
+    if (!context?.config) {
+      throw new Error('Invalid context configuration');
+    }
+
+    // Önce bağlantıyı test et
+    const connected = await setupKubernetesClient(context);
+    if (!connected) {
+      throw new Error('Could not establish connection to cluster');
+    }
+
+    // Test için basit bir API çağrısı yap
+    try {
+      await k8sApi.core.listNamespace();
+    } catch (error) {
+      throw new Error(`Connection test failed: ${error.message}`);
+    }
+
+    return {
+      success: true,
+      message: `Successfully connected to cluster "${context.name}"`
+    };
+
+  } catch (error) {
+    console.error('Error switching context:', error);
+    return {
+      success: false,
+      message: `Failed to connect to cluster "${context?.name}": ${error.message}`,
+      details: {
+        cluster: context?.cluster,
+        user: context?.user,
+        error: error.message
+      }
+    };
+  }
+}); 

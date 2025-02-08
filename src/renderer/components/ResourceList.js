@@ -67,30 +67,55 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
   const [logsDialog, setLogsDialog] = useState(false);
 
   useEffect(() => {
+    // Context değiştiğinde tüm state'leri temizle
+    setPods([]);
+    setDeployments([]);
+    setServices([]);
+    setConfigMaps([]);
+    setSecrets([]);
+    setPvs([]);
+    setStatefulSets([]);
+    setDaemonSets([]);
+    setIngresses([]);
+    setPvcs([]);
+    setCronJobs([]);
+    setJobs([]);
+    setEvents([]);
+    setSelectedNamespace('all');
+    setNamespaces([]);
+    setError(null);
+
     if (config) {
-      console.log('ResourceList received config:', config); // Debug için
+      console.log('Loading resources for context:', config.name);
       loadResources();
       loadNamespaces();
-      // 2 saniyelik bir interval başlat
+      
+      // Interval'i temizle ve yeniden başlat
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
       const interval = setInterval(() => {
         loadResources();
       }, 2000);
       setRefreshInterval(interval);
     }
 
-    // Component unmount olduğunda interval'i temizle
+    // Component unmount olduğunda veya context değiştiğinde interval'i temizle
     return () => {
       if (refreshInterval) {
         clearInterval(refreshInterval);
       }
     };
-  }, [config]);
+  }, [config]); // config değişimini izle
 
   const loadResources = async () => {
     try {
       if (!config) {
-        throw new Error('No config provided');
+        console.log('No config provided, skipping resource load');
+        return;
       }
+
+      console.log('Loading resources for context:', config.name);
 
       const [
         podList,
@@ -107,34 +132,36 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
         jobList,
         eventList
       ] = await Promise.all([
-        ipcRenderer.invoke('get-pods', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-deployments', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-services', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-configmaps', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-secrets', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-pvs', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-statefulsets', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-daemonsets', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-ingresses', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-pvcs', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-cronjobs', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-jobs', config).catch(e => ({ items: [] })),
-        ipcRenderer.invoke('get-events', config).catch(e => ({ items: [] }))
+        ipcRenderer.invoke('get-pods', config),
+        ipcRenderer.invoke('get-deployments', config),
+        ipcRenderer.invoke('get-services', config),
+        ipcRenderer.invoke('get-configmaps', config),
+        ipcRenderer.invoke('get-secrets', config),
+        ipcRenderer.invoke('get-pvs', config),
+        ipcRenderer.invoke('get-statefulsets', config),
+        ipcRenderer.invoke('get-daemonsets', config),
+        ipcRenderer.invoke('get-ingresses', config),
+        ipcRenderer.invoke('get-pvcs', config),
+        ipcRenderer.invoke('get-cronjobs', config),
+        ipcRenderer.invoke('get-jobs', config),
+        ipcRenderer.invoke('get-events', config)
       ]);
 
-      setPods(podList.items || []);
-      setDeployments(deploymentList.items || []);
-      setServices(serviceList.items || []);
-      setConfigMaps(configMapList.items || []);
-      setSecrets(secretList.items || []);
-      setPvs(pvList.items || []);
-      setStatefulSets(statefulSetList.items || []);
-      setDaemonSets(daemonSetList.items || []);
-      setIngresses(ingressList.items || []);
-      setPvcs(pvcList.items || []);
-      setCronJobs(cronJobList.items || []);
-      setJobs(jobList.items || []);
-      setEvents(eventList.items || []);
+      // Sadece başarılı yanıtları state'e kaydet
+      if (podList?.items) setPods(podList.items);
+      if (deploymentList?.items) setDeployments(deploymentList.items);
+      if (serviceList?.items) setServices(serviceList.items);
+      if (configMapList?.items) setConfigMaps(configMapList.items);
+      if (secretList?.items) setSecrets(secretList.items);
+      if (pvList?.items) setPvs(pvList.items);
+      if (statefulSetList?.items) setStatefulSets(statefulSetList.items);
+      if (daemonSetList?.items) setDaemonSets(daemonSetList.items);
+      if (ingressList?.items) setIngresses(ingressList.items);
+      if (pvcList?.items) setPvcs(pvcList.items);
+      if (cronJobList?.items) setCronJobs(cronJobList.items);
+      if (jobList?.items) setJobs(jobList.items);
+      if (eventList?.items) setEvents(eventList.items);
+
     } catch (error) {
       console.error('Error loading resources:', error);
       setError(error.message);
