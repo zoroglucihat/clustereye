@@ -8,6 +8,7 @@ const os = require('os');
 const YAML = require('yaml');
 const { exec } = require('child_process');
 const OpenAI = require('openai');
+const { spawn } = require('child_process');
 
 const store = new Store();
 
@@ -497,26 +498,127 @@ ipcMain.handle('get-events', async (event, context) => {
   }
 });
 
-// Pod'da komut çalıştırma
-ipcMain.handle('exec-in-pod', async (event, { namespace, podName, command, context }) => {
+// Pod exec handler
+ipcMain.handle('exec-in-pod', async (event, { namespace, podName, context }) => {
   try {
+    if (!context?.config) {
+      throw new Error('No context provided');
+    }
+
+    // Kubernetes client'ı ayarla
     await setupKubernetesClient(context);
-    const exec = new k8s.Exec(k8sConfig);
-    const result = await exec.exec(
-      namespace,
-      podName,
-      'sh',
-      ['-c', command],
-      process.stdout,
-      process.stderr,
-      process.stdin,
-      true
-    );
+
+    // Önce pod'un var olduğunu kontrol et
+    try {
+      const pod = await k8sApi.core.readNamespacedPod(podName, namespace);
+      console.log('Pod found:', pod.body.metadata.name);
+    } catch (error) {
+      console.error('Pod not found:', error);
+      throw new Error(`Pod "${podName}" not found in namespace "${namespace}"`);
+    }
+
+    // kubectl exec komutunu çalıştır
+    const kubectlCmd = `kubectl exec -it -n ${namespace} ${podName} -- /bin/sh`;
     
-    return result;
+    console.log('Executing command:', kubectlCmd);
+
+    const shell = spawn('kubectl', [
+      'exec',
+      '-n', namespace,
+      podName,
+      '-it',
+      '--',
+      '/bin/sh'
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: true,
+      env: {
+        ...process.env,
+        KUBECONFIG: context.kubeconfigPath
+      }
+    });
+
+    shell.stdout.on('data', (data) => {
+      event.sender.send('terminal-output', data.toString());
+    });
+
+    shell.stderr.on('data', (data) => {
+      event.sender.send('terminal-error', data.toString());
+    });
+
+    shell.on('close', (code) => {
+      event.sender.send('terminal-closed', code);
+    });
+
+    // Terminal input handler
+    ipcMain.on('terminal-input', (e, input) => {
+      if (shell.stdin.writable) {
+        shell.stdin.write(input);
+      }
+    });
+
+    return {
+      success: true,
+      message: 'Connected to pod successfully'
+    };
+
   } catch (error) {
-    console.error('Error executing command in pod:', error);
-    throw error;
+    console.error('Error in exec-in-pod:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to connect to pod'
+    };
+  }
+});
+
+// Terminal input handler
+ipcMain.on('terminal-input', (event, { sessionId, data }) => {
+  try {
+    const websocket = activeWebSockets.get(sessionId);
+    if (websocket && websocket.readyState === websocket.OPEN) {
+      websocket.send(data);
+    }
+  } catch (error) {
+    console.error('Error sending terminal input:', error);
+  }
+});
+
+// WebSocket bağlantılarını saklamak için Map
+const activeWebSockets = new Map();
+
+// Terminal oturumu başlatma handler'ı ekleyelim
+ipcMain.handle('start-terminal-session', async (event, { namespace, podName, context }) => {
+  try {
+    const shell = spawn('kubectl', [
+      'exec',
+      '-n', namespace,
+      podName,
+      '-it',
+      '--',
+      '/bin/sh'
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: true
+    });
+
+    shell.stdout.on('data', (data) => {
+      event.sender.send('terminal-output', data.toString());
+    });
+
+    shell.stderr.on('data', (data) => {
+      event.sender.send('terminal-error', data.toString());
+    });
+
+    return {
+      success: true,
+      message: 'Terminal session started'
+    };
+  } catch (error) {
+    console.error('Error starting terminal session:', error);
+    return {
+      success: false,
+      message: error.message
+    };
   }
 });
 
@@ -689,24 +791,63 @@ ipcMain.handle('get-logs', async (event, { namespace, name, context }) => {
   }
 });
 
-// Pod silme handler'ı
+// Generic delete resource handler
 ipcMain.handle('delete-resource', async (event, { namespace, name, kind, context }) => {
   try {
     await setupKubernetesClient(context);
     
-    return new Promise((resolve, reject) => {
-      exec(`kubectl delete ${kind.toLowerCase()} -n ${namespace} ${name}`, (error, stdout, stderr) => {
-        if (error) {
-          console.error('Error deleting resource:', error);
-          reject(error);
-          return;
-        }
-        resolve(stdout);
-      });
-    });
+    // Her kaynak türü için uygun API çağrısını yap
+    switch (kind) {
+      case 'Pod':
+        await k8sApi.core.deleteNamespacedPod(name, namespace);
+        break;
+      case 'Deployment':
+        await k8sApi.apps.deleteNamespacedDeployment(name, namespace);
+        break;
+      case 'Service':
+        await k8sApi.core.deleteNamespacedService(name, namespace);
+        break;
+      case 'ConfigMap':
+        await k8sApi.core.deleteNamespacedConfigMap(name, namespace);
+        break;
+      case 'Secret':
+        await k8sApi.core.deleteNamespacedSecret(name, namespace);
+        break;
+      case 'PersistentVolume':
+        await k8sApi.core.deletePersistentVolume(name);
+        break;
+      case 'StatefulSet':
+        await k8sApi.apps.deleteNamespacedStatefulSet(name, namespace);
+        break;
+      case 'DaemonSet':
+        await k8sApi.apps.deleteNamespacedDaemonSet(name, namespace);
+        break;
+      case 'Ingress':
+        await k8sApi.networking.deleteNamespacedIngress(name, namespace);
+        break;
+      case 'PersistentVolumeClaim':
+        await k8sApi.core.deleteNamespacedPersistentVolumeClaim(name, namespace);
+        break;
+      case 'CronJob':
+        await k8sApi.batch.deleteNamespacedCronJob(name, namespace);
+        break;
+      case 'Job':
+        await k8sApi.batch.deleteNamespacedJob(name, namespace);
+        break;
+      default:
+        throw new Error(`Unsupported resource kind: ${kind}`);
+    }
+
+    return {
+      success: true,
+      message: `${kind} deleted successfully`
+    };
   } catch (error) {
-    console.error('Error in delete-resource:', error);
-    throw error;
+    console.error(`Error deleting ${kind}:`, error);
+    return {
+      success: false,
+      message: error.message
+    };
   }
 });
 
@@ -992,6 +1133,51 @@ ipcMain.handle('switch-context', async (event, context) => {
         user: context?.user,
         error: error.message
       }
+    };
+  }
+});
+
+// Scale deployment handler
+ipcMain.handle('scale-deployment', async (event, { namespace, name, replicas, context }) => {
+  try {
+    await setupKubernetesClient(context);
+    const response = await k8sApi.apps.patchNamespacedDeployment(
+      name,
+      namespace,
+      [{ op: 'replace', path: '/spec/replicas', value: replicas }],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { headers: { 'Content-Type': 'application/json-patch+json' } }
+    );
+    return {
+      success: true,
+      message: `Deployment scaled to ${replicas} replicas`
+    };
+  } catch (error) {
+    console.error('Error scaling deployment:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+
+// Delete deployment handler
+ipcMain.handle('delete-deployment', async (event, { namespace, name, context }) => {
+  try {
+    await setupKubernetesClient(context);
+    await k8sApi.apps.deleteNamespacedDeployment(name, namespace);
+    return {
+      success: true,
+      message: 'Deployment deleted successfully'
+    };
+  } catch (error) {
+    console.error('Error deleting deployment:', error);
+    return {
+      success: false,
+      message: error.message
     };
   }
 }); 

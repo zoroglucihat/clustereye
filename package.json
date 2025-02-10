@@ -4,9 +4,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "concurrently \"cross-env BROWSER=none NODE_ENV=development webpack serve\" \"wait-on http://localhost:8080 && cross-env NODE_ENV=development electron .\"",
-    "build": "webpack --config webpack.config.js && electron-builder",
-    "generate-icons": "node scripts/generate-icons.js"
+    "dev": "concurrently \"cross-env BROWSER=none NODE_ENV=development webpack serve --port 8081\" \"wait-on http://localhost:8081 && cross-env NODE_ENV=development electron .\""
   },
   "dependencies": {
     "@emotion/react": "^11.11.3",

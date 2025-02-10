@@ -21,7 +21,8 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  IconButton
+  IconButton,
+  Divider
 } from '@mui/material';
 import * as Icons from '@mui/icons-material';
 import ResourceDetails from './ResourceDetails';
@@ -65,6 +66,7 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
   const [selectedItem, setSelectedItem] = useState(null);
   const [logs, setLogs] = useState(null);
   const [logsDialog, setLogsDialog] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
 
   useEffect(() => {
     // Context değiştiğinde tüm state'leri temizle
@@ -257,6 +259,136 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
     handleMenuClose();
   };
 
+  // Pod listesi için özel render fonksiyonu
+  const renderPodList = (pods) => (
+    <List>
+      {pods.map((pod) => (
+        <ListItem 
+          key={`${pod.metadata.namespace}-${pod.metadata.name}`} 
+          disablePadding
+          sx={{ 
+            borderBottom: '1px solid rgba(255, 255, 255, 0.12)',
+            '&:hover': {
+              backgroundColor: 'rgba(255, 255, 255, 0.05)'
+            }
+          }}
+        >
+          <ListItemButton onClick={() => handleResourceClick(pod)}>
+            <ListItemIcon>
+              <Icons.Circle sx={{ 
+                color: getStatusColor(pod.status?.phase),
+                width: 12,
+                height: 12
+              }} />
+            </ListItemIcon>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column',
+              flexGrow: 1
+            }}>
+              <Box sx={{ 
+                display: 'flex', 
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <Typography variant="body1" component="div">
+                  {pod.metadata.name}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  {pod.status?.phase === 'Running' && (
+                    <>
+                      <Button
+                        size="small"
+                        startIcon={<Icons.Terminal />}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleConnect(pod);
+                        }}
+                        variant="contained"
+                        color="primary"
+                      >
+                        Connect
+                      </Button>
+                      <Button
+                        size="small"
+                        startIcon={<Icons.Article />}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setSelectedItem(pod);
+                          handleViewLogs();
+                        }}
+                        variant="outlined"
+                        color="primary"
+                      >
+                        Logs
+                      </Button>
+                    </>
+                  )}
+                  <Button
+                    size="small"
+                    startIcon={<Icons.Delete />}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDeleteResource(pod);
+                    }}
+                    color="error"
+                    variant="outlined"
+                  >
+                    Delete
+                  </Button>
+                  <Chip 
+                    label={pod.status?.phase}
+                    size="small"
+                    color={pod.status?.phase === 'Running' ? 'success' : 'default'}
+                  />
+                  <Chip 
+                    label={pod.metadata.namespace}
+                    size="small"
+                    variant="outlined"
+                  />
+                </Box>
+              </Box>
+              <Box sx={{ 
+                display: 'flex', 
+                gap: 2,
+                mt: 1,
+                color: 'text.secondary',
+                fontSize: '0.875rem'
+              }}>
+                {getResourceDetails(pod)}
+              </Box>
+            </Box>
+          </ListItemButton>
+          
+          <Box sx={{ pr: 1, display: 'flex', alignItems: 'center' }}>
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Opening menu for:', pod); // Debug için
+                setSelectedItem(pod);
+                setAnchorEl(e.currentTarget);
+              }}
+              sx={{ 
+                color: 'text.secondary',
+                '&:hover': {
+                  color: 'primary.main',
+                  backgroundColor: 'action.hover'
+                }
+              }}
+            >
+              <Icons.MoreVert />
+            </IconButton>
+          </Box>
+        </ListItem>
+      ))}
+    </List>
+  );
+
   const renderResourceList = (resources, getSecondaryText) => (
     <List>
       {resources.map((resource) => (
@@ -273,10 +405,7 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
           <ListItemButton onClick={() => handleResourceClick(resource)}>
             <ListItemIcon>
               <Icons.Circle sx={{ 
-                color: getStatusColor(
-                  resource.status?.phase || 
-                  resource.status?.conditions?.[0]?.status
-                ),
+                color: getStatusColor(resource.status?.phase || resource.status?.conditions?.[0]?.status),
                 width: 12,
                 height: 12
               }} />
@@ -291,10 +420,54 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
                 justifyContent: 'space-between',
                 alignItems: 'center'
               }}>
-                <Typography variant="body1" component="div">
+                <Typography variant="body1">
                   {resource.metadata.name}
                 </Typography>
-                <Box sx={{ display: 'flex', gap: 1 }}>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  {resource.kind === 'Pod' && resource.status?.phase === 'Running' && (
+                    <>
+                      <Button
+                        size="small"
+                        startIcon={<Icons.Terminal />}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleConnect(resource);
+                        }}
+                        variant="contained"
+                        color="primary"
+                      >
+                        Connect
+                      </Button>
+                      <Button
+                        size="small"
+                        startIcon={<Icons.Article />}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setSelectedItem(resource);
+                          handleViewLogs();
+                        }}
+                        variant="outlined"
+                        color="primary"
+                      >
+                        Logs
+                      </Button>
+                    </>
+                  )}
+                  <Button
+                    size="small"
+                    startIcon={<Icons.Delete />}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDeleteResource(resource);
+                    }}
+                    color="error"
+                    variant="outlined"
+                  >
+                    Delete
+                  </Button>
                   {resource.status?.phase && (
                     <Chip 
                       label={resource.status.phase}
@@ -323,100 +496,108 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
             </Box>
           </ListItemButton>
           
-          {/* Actions Butonu */}
-          <Box sx={{ pr: 2 }}>
-            <Button
+          <Box sx={{ pr: 1, display: 'flex', alignItems: 'center' }}>
+            <IconButton
               size="small"
               onClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
-                setAnchorEl(e.currentTarget);
+                console.log('Opening menu for:', resource); // Debug için
                 setSelectedItem(resource);
+                setAnchorEl(e.currentTarget);
               }}
-              endIcon={<Icons.ArrowDropDown />}
+              sx={{ 
+                color: 'text.secondary',
+                '&:hover': {
+                  color: 'primary.main',
+                  backgroundColor: 'action.hover'
+                }
+              }}
             >
-              Actions
-            </Button>
+              <Icons.MoreVert />
+            </IconButton>
           </Box>
         </ListItem>
       ))}
-
-      {/* Actions Menu */}
-      <Menu
-        anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
-        onClose={handleMenuClose}
-      >
-        <MenuItem onClick={handleEdit}>
-          <ListItemIcon>
-            <Icons.Edit fontSize="small" />
-          </ListItemIcon>
-          YAML Düzenle
-        </MenuItem>
-        {selectedItem?.kind === 'Pod' && (
-          <>
-            <MenuItem onClick={handleViewLogs}>
-              <ListItemIcon>
-                <Icons.Article fontSize="small" />
-              </ListItemIcon>
-              Logları Görüntüle
-            </MenuItem>
-            <MenuItem onClick={handleExecShell}>
-              <ListItemIcon>
-                <Icons.Terminal fontSize="small" />
-              </ListItemIcon>
-              Terminal'e Bağlan
-            </MenuItem>
-            <MenuItem onClick={handleDelete}>
-              <ListItemIcon>
-                <Icons.Delete fontSize="small" color="error" />
-              </ListItemIcon>
-              <Typography color="error">Sil</Typography>
-            </MenuItem>
-          </>
-        )}
-      </Menu>
-
-      {/* Logs Dialog */}
-      <Dialog
-        open={logsDialog}
-        onClose={() => setLogsDialog(false)}
-        maxWidth="lg"
-        fullWidth
-      >
-        <DialogTitle>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Icons.Article />
-            Logs: {selectedItem?.metadata.name}
-            <Chip 
-              size="small" 
-              label={selectedItem?.metadata.namespace}
-              sx={{ ml: 1 }}
-            />
-          </Box>
-          <IconButton
-            onClick={() => setLogsDialog(false)}
-            sx={{ position: 'absolute', right: 8, top: 8 }}
-          >
-            <Icons.Close />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent>
-          <Box
-            sx={{
-              fontFamily: 'monospace',
-              whiteSpace: 'pre-wrap',
-              bgcolor: 'background.paper',
-              p: 2,
-              borderRadius: 1,
-              maxHeight: '70vh',
-              overflow: 'auto'
-            }}
-          >
-            {logs}
-          </Box>
-        </DialogContent>
-      </Dialog>
     </List>
+  );
+
+  // Pod actions için menu render
+  const renderActionsMenu = () => (
+    <Menu
+      anchorEl={anchorEl}
+      open={Boolean(anchorEl)}
+      onClose={handleMenuClose}
+      onClick={(e) => e.stopPropagation()}
+      MenuListProps={{
+        dense: true,
+        sx: { minWidth: 200 }
+      }}
+      anchorOrigin={{
+        vertical: 'bottom',
+        horizontal: 'right',
+      }}
+      transformOrigin={{
+        vertical: 'top',
+        horizontal: 'right',
+      }}
+      PaperProps={{
+        elevation: 3,
+        sx: {
+          mt: 1,
+          minWidth: 180,
+          '& .MuiMenuItem-root': {
+            px: 2,
+            py: 1
+          }
+        }
+      }}
+    >
+      {selectedItem && (
+        <>
+          <MenuItem onClick={handleEdit}>
+            <ListItemIcon>
+              <Icons.Edit fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primary="Edit YAML" />
+          </MenuItem>
+
+          {selectedItem.kind === 'Pod' && (
+            <>
+              {selectedItem.status?.phase === 'Running' && (
+                <>
+                  <MenuItem onClick={handleViewLogs}>
+                    <ListItemIcon>
+                      <Icons.Article fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="View Logs" />
+                  </MenuItem>
+                </>
+              )}
+
+              <Divider />
+
+              <MenuItem onClick={() => {
+                handleMenuClose();
+                handleConnect(selectedItem);
+              }}>
+                <ListItemIcon>
+                  <Icons.Terminal fontSize="small" />
+                </ListItemIcon>
+                <ListItemText primary="Connect to Pod" />
+              </MenuItem>
+
+              <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
+                <ListItemIcon>
+                  <Icons.Delete fontSize="small" color="error" />
+                </ListItemIcon>
+                <ListItemText primary="Delete Pod" />
+              </MenuItem>
+            </>
+          )}
+        </>
+      )}
+    </Menu>
   );
 
   const getResourceDetails = (resource) => {
@@ -621,6 +802,96 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
     loadResources();
   };
 
+  const handleDeleteResource = async (resource) => {
+    if (window.confirm(`Are you sure you want to delete ${resource.kind.toLowerCase()} "${resource.metadata.name}"?`)) {
+      try {
+        const result = await ipcRenderer.invoke('delete-resource', {
+          namespace: resource.metadata.namespace,
+          name: resource.metadata.name,
+          kind: resource.kind,
+          context: currentContext
+        });
+
+        if (result.success) {
+          loadResources(); // Listeyi yenile
+        } else {
+          throw new Error(result.message);
+        }
+      } catch (error) {
+        console.error(`Error deleting ${resource.kind}:`, error);
+        alert(`Failed to delete ${resource.kind.toLowerCase()}: ${error.message}`);
+      }
+    }
+  };
+
+  // Connect butonu için onClick handler'ı düzeltelim
+  const handleConnect = async (pod) => {
+    try {
+      console.log('Connecting to pod:', {
+        name: pod.metadata.name,
+        namespace: pod.metadata.namespace
+      });
+
+      const result = await ipcRenderer.invoke('exec-in-pod', {
+        namespace: pod.metadata.namespace,
+        podName: pod.metadata.name,
+        context: currentContext
+      });
+
+      if (result.success) {
+        setShowTerminal(true);
+        setShowBottomPanel(true);
+
+        // Event listener'ları temizle
+        ipcRenderer.removeAllListeners('terminal-output');
+        ipcRenderer.removeAllListeners('terminal-error');
+        ipcRenderer.removeAllListeners('terminal-closed');
+
+        // Yeni event listener'ları ekle
+        ipcRenderer.on('terminal-output', (event, data) => {
+          console.log('Terminal output:', data);
+          setLogs((prevLogs) => (prevLogs || '') + data);
+        });
+
+        ipcRenderer.on('terminal-error', (event, error) => {
+          console.error('Terminal error:', error);
+          setLogs((prevLogs) => (prevLogs || '') + `Error: ${error}\n`);
+        });
+
+        ipcRenderer.on('terminal-closed', () => {
+          console.log('Terminal connection closed');
+          setShowTerminal(false);
+          setShowBottomPanel(false);
+        });
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (error) {
+      console.error('Error connecting to pod:', error);
+      alert(`Failed to connect to pod: ${error.message}`);
+    }
+  };
+
+  const handleScaleDeployment = async (deployment, replicas) => {
+    try {
+      const result = await ipcRenderer.invoke('scale-deployment', {
+        namespace: deployment.metadata.namespace,
+        name: deployment.metadata.name,
+        replicas: replicas,
+        context: currentContext
+      });
+
+      if (result.success) {
+        loadResources(); // Listeyi yenile
+      } else {
+        throw new Error(result.message);
+      }
+    } catch (error) {
+      console.error('Error scaling deployment:', error);
+      alert(`Failed to scale deployment: ${error.message}`);
+    }
+  };
+
   if (error) {
     return (
       <Box sx={{ p: 2 }}>
@@ -697,15 +968,103 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
           </Box>
 
           <TabPanel value={value} index={0}>
-            {renderResourceList(filterResources(pods), (pod) => 
-              `Namespace: ${pod.metadata.namespace} | Status: ${pod.status.phase}`
-            )}
+            {renderPodList(filterResources(pods))}
           </TabPanel>
 
           <TabPanel value={value} index={1}>
-            {renderResourceList(filterResources(deployments), (deployment) => 
-              `Namespace: ${deployment.metadata.namespace} | Replicas: ${deployment.status.replicas}/${deployment.spec.replicas}`
-            )}
+            <List>
+              {filterResources(deployments).map((deployment) => (
+                <ListItem 
+                  key={`${deployment.metadata.namespace}-${deployment.metadata.name}`} 
+                  disablePadding
+                  sx={{ 
+                    borderBottom: '1px solid rgba(255, 255, 255, 0.12)',
+                    '&:hover': {
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)'
+                    }
+                  }}
+                >
+                  <ListItemButton onClick={() => handleResourceClick(deployment)}>
+                    <ListItemIcon>
+                      <Icons.Circle sx={{ 
+                        color: getStatusColor(deployment.status?.conditions?.[0]?.status),
+                        width: 12,
+                        height: 12
+                      }} />
+                    </ListItemIcon>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: 'column',
+                      flexGrow: 1
+                    }}>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}>
+                        <Typography variant="body1">
+                          {deployment.metadata.name}
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                          <Chip 
+                            label={`Replicas: ${deployment.spec.replicas}`}
+                            size="small"
+                            color="info"
+                          />
+                          <Button
+                            size="small"
+                            startIcon={<Icons.Add />}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleScaleDeployment(deployment, deployment.spec.replicas + 1);
+                            }}
+                            variant="outlined"
+                            color="primary"
+                          >
+                            Scale Up
+                          </Button>
+                          <Button
+                            size="small"
+                            startIcon={<Icons.Remove />}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (deployment.spec.replicas > 0) {
+                                handleScaleDeployment(deployment, deployment.spec.replicas - 1);
+                              }
+                            }}
+                            variant="outlined"
+                            color="primary"
+                            disabled={deployment.spec.replicas <= 0}
+                          >
+                            Scale Down
+                          </Button>
+                          <Button
+                            size="small"
+                            startIcon={<Icons.Delete />}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDeleteResource(deployment);
+                            }}
+                            color="error"
+                            variant="outlined"
+                          >
+                            Delete
+                          </Button>
+                          <Chip 
+                            label={deployment.metadata.namespace}
+                            size="small"
+                            variant="outlined"
+                          />
+                        </Box>
+                      </Box>
+                    </Box>
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
           </TabPanel>
 
           <TabPanel value={value} index={2}>
@@ -809,6 +1168,50 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
           {showBottomPanel ? 'Hide Panel' : 'Show Panel'}
         </Button>
       </Box>
+
+      {/* Actions Menu */}
+      {renderActionsMenu()}
+
+      {/* Logs Dialog */}
+      <Dialog
+        open={logsDialog}
+        onClose={() => setLogsDialog(false)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Icons.Article />
+            Logs: {selectedItem?.metadata.name}
+            <Chip 
+              size="small" 
+              label={selectedItem?.metadata.namespace}
+              sx={{ ml: 1 }}
+            />
+          </Box>
+          <IconButton
+            onClick={() => setLogsDialog(false)}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <Icons.Close />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <Box
+            sx={{
+              fontFamily: 'monospace',
+              whiteSpace: 'pre-wrap',
+              bgcolor: 'background.paper',
+              p: 2,
+              borderRadius: 1,
+              maxHeight: '70vh',
+              overflow: 'auto'
+            }}
+          >
+            {logs}
+          </Box>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
