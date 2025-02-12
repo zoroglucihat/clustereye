@@ -29,7 +29,11 @@ const AI_MODELS = {
 };
 
 function SecondEyeAdvisor({ open, onClose, currentContext }) {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([{
+    role: 'assistant',
+    content: 'Hello! I can help you analyze your Kubernetes cluster. What would you like to know?',
+    timestamp: new Date().toISOString()
+  }]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState(AI_MODELS.GPT4);
   const [isTyping, setIsTyping] = useState(false);
@@ -43,48 +47,13 @@ function SecondEyeAdvisor({ open, onClose, currentContext }) {
     scrollToBottom();
   }, [messages]);
 
-  // Context değiştiğinde otomatik analiz yap
+  // Context değiştiğinde otomatik analiz yapma özelliğini kaldıralım
   useEffect(() => {
     if (currentContext && open) {
-      handleInitialAnalysis();
+      // handleInitialAnalysis(); // Bu satırı kaldırıyoruz
+      console.log('Context changed:', currentContext.name);
     }
   }, [currentContext, open]);
-
-  // İlk analizi gerçekleştir
-  const handleInitialAnalysis = async () => {
-    setIsTyping(true);
-    try {
-      const response = await ipcRenderer.invoke('ask-advisor', {
-        message: "Please analyze this cluster's current state and highlight any important findings or potential issues.",
-        model: selectedModel,
-        context: currentContext
-      });
-
-      const aiMessage = {
-        role: 'assistant',
-        content: response,
-        timestamp: new Date().toISOString()
-      };
-
-      setMessages([aiMessage]); // Önceki mesajları temizle ve yeni analizi göster
-    } catch (error) {
-      console.error('Error getting initial analysis:', error);
-      const errorMessage = {
-        role: 'assistant',
-        content: `Error analyzing cluster: ${error.message}. Please try again.`,
-        timestamp: new Date().toISOString(),
-        isError: true
-      };
-      setMessages([errorMessage]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
-
-  // Context değiştiğinde mesajları temizle
-  useEffect(() => {
-    setMessages([]);
-  }, [currentContext]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -134,46 +103,97 @@ function SecondEyeAdvisor({ open, onClose, currentContext }) {
     }
   };
 
-  const renderMessage = (message) => (
-    <Box
-      sx={{
+  const renderMessage = (message) => {
+    const formatContent = (content) => {
+      // Code block'ları bul (``` ile başlayan ve biten)
+      return content.split(/(```[a-z]*\n[\s\S]*?```)/g).map((part, index) => {
+        if (part.startsWith('```')) {
+          // Code block
+          const language = part.split('\n')[0].replace('```', '');
+          const code = part
+            .split('\n')
+            .slice(1, -1)
+            .join('\n');
+          
+          return (
+            <Box key={index} sx={{ my: 2 }}>
+              <Paper 
+                sx={{ 
+                  p: 2,
+                  backgroundColor: 'grey.900',
+                  position: 'relative'
+                }}
+              >
+                {language && (
+                  <Typography 
+                    variant="caption" 
+                    sx={{ 
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      color: 'text.secondary'
+                    }}
+                  >
+                    {language}
+                  </Typography>
+                )}
+                <pre style={{ 
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  color: '#e6e6e6',
+                  fontFamily: 'monospace'
+                }}>
+                  {code}
+                </pre>
+                <Box sx={{ 
+                  display: 'flex', 
+                  justifyContent: 'flex-end',
+                  mt: 1 
+                }}>
+                  <IconButton
+                    size="small"
+                    onClick={() => navigator.clipboard.writeText(code)}
+                    sx={{ color: 'text.secondary' }}
+                  >
+                    <Icons.ContentCopy fontSize="small" />
+                  </IconButton>
+                </Box>
+              </Paper>
+            </Box>
+          );
+        }
+        // Normal text
+        return (
+          <Typography key={index} variant="body1" sx={{ my: 1, whiteSpace: 'pre-wrap' }}>
+            {part}
+          </Typography>
+        );
+      });
+    };
+
+    return (
+      <Box sx={{
         display: 'flex',
         gap: 2,
-        mb: 2,
-        flexDirection: message.role === 'user' ? 'row-reverse' : 'row'
-      }}
-    >
-      <Avatar
-        sx={{
-          bgcolor: message.isError ? 'error.main' : 
-                  message.role === 'user' ? 'primary.main' : 'secondary.main'
-        }}
-      >
-        {message.role === 'user' ? <Icons.Person /> : 
-         message.isError ? <Icons.Error /> : <Icons.SmartToy />}
-      </Avatar>
-      <Paper
-        sx={{
-          p: 2,
-          maxWidth: '70%',
-          bgcolor: message.isError ? 'error.dark' :
-                  message.role === 'user' ? 'primary.dark' : 'background.paper',
-          borderRadius: 2
-        }}
-      >
-        <Typography variant="body1" 
+        alignItems: 'flex-start'
+      }}>
+        <Avatar 
           sx={{ 
-            color: message.isError ? 'error.light' : 'inherit'
+            bgcolor: message.role === 'assistant' ? 'primary.main' : 'secondary.main'
           }}
         >
-          {message.content}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {new Date(message.timestamp).toLocaleTimeString()}
-        </Typography>
-      </Paper>
-    </Box>
-  );
+          {message.role === 'assistant' ? <Icons.SmartToy /> : <Icons.Person />}
+        </Avatar>
+        <Box sx={{ flex: 1 }}>
+          {formatContent(message.content)}
+          <Typography variant="caption" color="text.secondary">
+            {new Date(message.timestamp).toLocaleTimeString()}
+          </Typography>
+        </Box>
+      </Box>
+    );
+  };
 
   return (
     <Drawer
@@ -217,13 +237,6 @@ function SecondEyeAdvisor({ open, onClose, currentContext }) {
         <Typography variant="h6" sx={{ flexGrow: 1 }}>
           Second Eye Advisor
         </Typography>
-        <IconButton 
-          onClick={handleInitialAnalysis}
-          sx={{ mr: 1 }}
-          title="Refresh Analysis"
-        >
-          <Icons.Refresh />
-        </IconButton>
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>AI Model</InputLabel>
           <Select

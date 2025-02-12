@@ -349,45 +349,101 @@ ipcMain.handle('get-pvs', async (event, context) => {
   }
 });
 
-// Helm Releases
+// Helm releases
 ipcMain.handle('get-helm-releases', async (event, context) => {
   try {
+    if (!context?.config) {
+      return {
+        success: false,
+        message: 'No context configuration provided',
+        releases: []
+      };
+    }
+
     await setupKubernetesClient(context);
-    const k8sApi = k8s.CustomObjectsApi.makeApiClient(k8sConfig);
     
-    // Helm v3 releases için
+    // Kubernetes API'sini kullanarak Helm release'lerini al
+    const customApi = k8sConfig.makeApiClient(k8s.CustomObjectsApi);
+    
     try {
-      const response = await k8sApi.listClusterCustomObject(
-        'helm.sh',  // Doğru API grubu
-        'v1',       // API versiyonu
-        'releases'  // Çoğul kaynak adı
+      // Tüm namespace'lerdeki Helm release'lerini al
+      const { body } = await customApi.listClusterCustomObject(
+        'helm.sh',
+        'v1',
+        'releases'
       );
-      return response.body;
-    } catch (helmError) {
-      console.log('Trying alternative Helm API...');
-      // Alternatif olarak namespace bazlı sorgu
-      const namespaces = await k8sApi.listNamespace();
-      const releases = [];
+
+      // Release'leri dönüştür
+      const releases = body.items.map(item => ({
+        name: item.metadata.name,
+        namespace: item.metadata.namespace,
+        version: item.version,
+        status: item.status,
+        chart: {
+          name: item.spec.chart.name,
+          version: item.spec.chart.version,
+          metadata: {
+            name: item.spec.chart.metadata.name,
+            version: item.spec.chart.metadata.version,
+            description: item.spec.chart.metadata.description
+          }
+        },
+        updated: item.status.last_deployed,
+        info: item.info
+      }));
+
+      return {
+        success: true,
+        releases: releases
+      };
+
+    } catch (error) {
+      // Eğer CRD bulunamazsa veya başka bir hata olursa, alternatif yöntemi dene
+      console.log('Trying alternative method to get Helm releases...');
       
-      for (const ns of namespaces.body.items) {
-        try {
-          const nsReleases = await k8sApi.listNamespacedCustomObject(
-            'helm.sh',
-            'v1',
-            ns.metadata.name,
-            'releases'
-          );
-          releases.push(...nsReleases.body.items);
-        } catch (e) {
-          console.log(`No Helm releases in namespace ${ns.metadata.name}`);
-        }
-      }
-      
-      return { items: releases };
+      // Secret'lar üzerinden Helm release'lerini bul
+      const secretsResponse = await k8sApi.core.listSecretForAllNamespaces(
+        undefined,
+        undefined,
+        undefined,
+        'owner=helm'
+      );
+
+      const releases = secretsResponse.body.items
+        .filter(secret => secret.metadata.labels?.['owner'] === 'helm')
+        .map(secret => {
+          const data = JSON.parse(Buffer.from(secret.data['release'], 'base64').toString());
+          return {
+            name: secret.metadata.labels['name'],
+            namespace: secret.metadata.namespace,
+            version: data.version,
+            status: data.status,
+            chart: {
+              name: data.chart.name,
+              version: data.chart.version,
+              metadata: {
+                name: data.chart.metadata.name,
+                version: data.chart.metadata.version,
+                description: data.chart.metadata.description
+              }
+            },
+            updated: data.info.last_deployed,
+            info: data.info
+          };
+        });
+
+      return {
+        success: true,
+        releases: releases
+      };
     }
   } catch (error) {
-    console.error('Error fetching helm releases:', error);
-    return { items: [] }; // Hata durumunda boş liste dön
+    console.error('Error in get-helm-releases:', error);
+    return {
+      success: false,
+      message: error.message,
+      releases: []
+    };
   }
 });
 
@@ -1185,6 +1241,43 @@ ipcMain.handle('delete-deployment', async (event, { namespace, name, context }) 
     };
   } catch (error) {
     console.error('Error deleting deployment:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+
+// Helm release silme handler'ı
+ipcMain.handle('delete-helm-release', async (event, { name, namespace, context }) => {
+  try {
+    // Geçici kubeconfig oluştur
+    const tempKubeconfig = `/tmp/kubeconfig-${Date.now()}`;
+    fs.writeFileSync(tempKubeconfig, context.config);
+
+    return new Promise((resolve, reject) => {
+      exec(`helm uninstall ${name} -n ${namespace} --kubeconfig ${tempKubeconfig}`, (error, stdout, stderr) => {
+        // Geçici dosyayı temizle
+        try {
+          fs.unlinkSync(tempKubeconfig);
+        } catch (err) {
+          console.error('Error cleaning up temp kubeconfig:', err);
+        }
+
+        if (error) {
+          console.error('Error uninstalling helm release:', error);
+          reject(error);
+          return;
+        }
+
+        resolve({
+          success: true,
+          message: `Successfully uninstalled release "${name}"`
+        });
+      });
+    });
+  } catch (error) {
+    console.error('Error in delete-helm-release:', error);
     return {
       success: false,
       message: error.message

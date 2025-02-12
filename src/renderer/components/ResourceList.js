@@ -67,6 +67,7 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
   const [logs, setLogs] = useState(null);
   const [logsDialog, setLogsDialog] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [helmReleases, setHelmReleases] = useState([]);
 
   useEffect(() => {
     // Context değiştiğinde tüm state'leri temizle
@@ -163,6 +164,15 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
       if (cronJobList?.items) setCronJobs(cronJobList.items);
       if (jobList?.items) setJobs(jobList.items);
       if (eventList?.items) setEvents(eventList.items);
+
+      // Helm releases'leri yükle
+      const helmResult = await ipcRenderer.invoke('get-helm-releases', currentContext);
+      if (helmResult.success) {
+        setHelmReleases(helmResult.releases || []);
+      } else {
+        console.error('Error loading helm releases:', helmResult.message);
+        setHelmReleases([]);
+      }
 
     } catch (error) {
       console.error('Error loading resources:', error);
@@ -893,6 +903,27 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
     }
   };
 
+  const handleDeleteHelmRelease = async (release) => {
+    if (window.confirm(`Are you sure you want to uninstall Helm release "${release.name}"?`)) {
+      try {
+        const result = await ipcRenderer.invoke('delete-helm-release', {
+          name: release.name,
+          namespace: release.namespace,
+          context: currentContext
+        });
+
+        if (result.success) {
+          loadResources(); // Listeyi yenile
+        } else {
+          throw new Error(result.message);
+        }
+      } catch (error) {
+        console.error('Error uninstalling helm release:', error);
+        alert(`Failed to uninstall release: ${error.message}`);
+      }
+    }
+  };
+
   if (error) {
     return (
       <Box sx={{ p: 2 }}>
@@ -965,6 +996,7 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
               <Tab icon={<Icons.Schedule />} label={`CronJobs (${filterResources(cronJobs).length})`} />
               <Tab icon={<Icons.Work />} label={`Jobs (${filterResources(jobs).length})`} />
               <Tab icon={<Icons.Info />} label={`Events (${filterResources(events).length})`} />
+              <Tab icon={<Icons.Extension />} label={`Helm Releases (${filterResources(helmReleases).length})`} />
             </Tabs>
           </Box>
 
@@ -1131,6 +1163,106 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
           <TabPanel value={value} index={12}>
             {renderResourceList(filterResources(events), (event) => 
               `Namespace: ${event.metadata.namespace} | Type: ${event.type} | Reason: ${event.reason}`
+            )}
+          </TabPanel>
+
+          <TabPanel value={value} index={13}>
+            {helmReleases.length > 0 ? (
+              <List>
+                {filterResources(helmReleases).map((release) => (
+                  <ListItem
+                    key={`${release.namespace}-${release.name}`}
+                    disablePadding
+                  >
+                    <ListItemButton onClick={() => handleResourceClick(release)}>
+                      <ListItemIcon>
+                        <Icons.Circle sx={{ 
+                          color: release.status === 'deployed' ? 'success.main' : 'error.main',
+                          width: 12,
+                          height: 12
+                        }} />
+                      </ListItemIcon>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        flexDirection: 'column',
+                        flexGrow: 1
+                      }}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}>
+                          <Typography variant="body1">
+                            {release.name}
+                          </Typography>
+                          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                            <Chip 
+                              label={`v${release.chart.version}`}
+                              size="small"
+                              color="primary"
+                            />
+                            <Chip 
+                              label={release.chart.metadata.name}
+                              size="small"
+                              variant="outlined"
+                            />
+                            <Chip 
+                              label={release.namespace}
+                              size="small"
+                              variant="outlined"
+                            />
+                            <Button
+                              size="small"
+                              startIcon={<Icons.Delete />}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleDeleteHelmRelease(release);
+                              }}
+                              color="error"
+                              variant="outlined"
+                            >
+                              Uninstall
+                            </Button>
+                          </Box>
+                        </Box>
+                        <Typography variant="body2" color="text.secondary">
+                          Updated: {new Date(release.updated).toLocaleString()}
+                        </Typography>
+                      </Box>
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
+            ) : (
+              <Box sx={{ 
+                p: 3, 
+                display: 'flex', 
+                flexDirection: 'column', 
+                alignItems: 'center',
+                gap: 2 
+              }}>
+                <Icons.Extension sx={{ fontSize: 48, color: 'text.secondary' }} />
+                <Typography variant="h6" color="text.secondary">
+                  No Helm Releases Found
+                </Typography>
+                <Typography variant="body2" color="text.secondary" align="center">
+                  {currentContext ? 
+                    "Either Helm is not installed or there are no releases in this cluster. " +
+                    "Install Helm to manage releases, or switch to a different context."
+                    : 
+                    "Please select a context to view Helm releases."
+                  }
+                </Typography>
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  startIcon={<Icons.Refresh />}
+                  onClick={() => loadResources()}
+                >
+                  Refresh
+                </Button>
+              </Box>
             )}
           </TabPanel>
         </Box>
