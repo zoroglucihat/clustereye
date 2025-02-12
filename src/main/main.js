@@ -108,7 +108,7 @@ function createWindow() {
   });
 
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:8080/index.html');
+    mainWindow.loadURL('http://localhost:8081/index.html');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../public/index.html'));
   }
@@ -517,12 +517,13 @@ ipcMain.handle('exec-in-pod', async (event, { namespace, podName, context }) => 
       throw new Error(`Pod "${podName}" not found in namespace "${namespace}"`);
     }
 
-    // kubectl exec komutunu çalıştır
-    const kubectlCmd = `kubectl exec -it -n ${namespace} ${podName} -- /bin/sh`;
-    
-    console.log('Executing command:', kubectlCmd);
+    // Geçici bir kubeconfig dosyası oluştur
+    const tempKubeconfig = `/tmp/kubeconfig-${Date.now()}`;
+    fs.writeFileSync(tempKubeconfig, context.config);
 
+    // kubectl exec komutunu çalıştır
     const shell = spawn('kubectl', [
+      '--kubeconfig', tempKubeconfig,
       'exec',
       '-n', namespace,
       podName,
@@ -531,23 +532,32 @@ ipcMain.handle('exec-in-pod', async (event, { namespace, podName, context }) => 
       '/bin/sh'
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true,
       env: {
         ...process.env,
-        KUBECONFIG: context.kubeconfigPath
+        TERM: 'xterm-256color'
       }
     });
 
+    // Terminal çıktılarını yönet
     shell.stdout.on('data', (data) => {
+      console.log('Terminal output:', data.toString());
       event.sender.send('terminal-output', data.toString());
     });
 
     shell.stderr.on('data', (data) => {
+      console.error('Terminal error:', data.toString());
       event.sender.send('terminal-error', data.toString());
     });
 
     shell.on('close', (code) => {
+      console.log('Terminal closed with code:', code);
       event.sender.send('terminal-closed', code);
+      // Geçici kubeconfig dosyasını temizle
+      try {
+        fs.unlinkSync(tempKubeconfig);
+      } catch (error) {
+        console.error('Error cleaning up temp kubeconfig:', error);
+      }
     });
 
     // Terminal input handler

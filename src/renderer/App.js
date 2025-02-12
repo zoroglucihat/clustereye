@@ -238,9 +238,15 @@ function App() {
         <ListItem disablePadding>
           <ListItemButton onClick={() => setSelectedResource('upload')}>
             <ListItemIcon>
-              <Icons.UploadFile />
+              <Icons.UploadFile fontSize="small" />
             </ListItemIcon>
-            <ListItemText primary="Upload Kubeconfig" />
+            <ListItemText 
+              primary={
+                <Typography variant="body2">
+                  Upload Kubeconfig
+                </Typography>
+              }
+            />
           </ListItemButton>
         </ListItem>
       </List>
@@ -253,11 +259,28 @@ function App() {
               selected={currentContext?.name === context.name}
             >
               <ListItemIcon>
-                <Icons.Storage color={context.isCurrent ? "primary" : "inherit"} />
+                <Icons.Storage 
+                  fontSize="small"
+                  color={context.isCurrent ? "primary" : "inherit"} 
+                />
               </ListItemIcon>
               <ListItemText 
-                primary={context.name}
-                secondary={`Cluster: ${context.cluster} | User: ${context.user}`}
+                primary={
+                  <Typography variant="body2" noWrap>
+                    {context.name}
+                  </Typography>
+                }
+                secondary={
+                  <Typography variant="caption" color="text.secondary" noWrap>
+                    {`${context.cluster} | ${context.user}`}
+                  </Typography>
+                }
+                sx={{
+                  margin: 0,
+                  '& .MuiTypography-root': {
+                    lineHeight: 1.2
+                  }
+                }}
               />
             </ListItemButton>
           </ListItem>

@@ -829,7 +829,8 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
     try {
       console.log('Connecting to pod:', {
         name: pod.metadata.name,
-        namespace: pod.metadata.namespace
+        namespace: pod.metadata.namespace,
+        context: currentContext
       });
 
       const result = await ipcRenderer.invoke('exec-in-pod', {
@@ -850,12 +851,12 @@ function ResourceList({ config, onResourceSelect, currentContext }) {
         // Yeni event listener'ları ekle
         ipcRenderer.on('terminal-output', (event, data) => {
           console.log('Terminal output:', data);
-          setLogs((prevLogs) => (prevLogs || '') + data);
+          setLogs((prevLogs) => prevLogs + data);
         });
 
         ipcRenderer.on('terminal-error', (event, error) => {
           console.error('Terminal error:', error);
-          setLogs((prevLogs) => (prevLogs || '') + `Error: ${error}\n`);
+          setLogs((prevLogs) => prevLogs + `Error: ${error}\n`);
         });
 
         ipcRenderer.on('terminal-closed', () => {
