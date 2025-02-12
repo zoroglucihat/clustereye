@@ -4,7 +4,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "concurrently \"cross-env BROWSER=none NODE_ENV=development webpack serve --port 8081\" \"wait-on http://localhost:8081 && cross-env NODE_ENV=development electron .\""
+    "dev": "concurrently \"cross-env BROWSER=none NODE_ENV=development webpack serve --port 8082\" \"wait-on http://localhost:8082 && cross-env NODE_ENV=development electron .\""
   },
   "dependencies": {
     "@emotion/react": "^11.11.3",
@@ -21,7 +21,8 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.11.2",
     "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0"
+    "xterm-addon-fit": "^0.8.0",
+    "yaml": "^2.3.4"
   },
   "keywords": [],
   "author": "",

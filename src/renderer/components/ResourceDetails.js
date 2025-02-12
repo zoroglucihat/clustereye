@@ -12,6 +12,7 @@ import {
   Chip
 } from '@mui/material';
 import * as Icons from '@mui/icons-material';
+import YAML from 'yaml';
 
 function TabPanel({ children, value, index }) {
   return (
@@ -58,25 +59,73 @@ function ResourceDetails({ open, onClose, resource }) {
     </Box>
   );
 
-  const renderSpec = () => (
-    <Box>
-      <Paper sx={{ p: 2, backgroundColor: 'background.paper' }}>
-        <pre style={{ margin: 0, overflow: 'auto' }}>
-          {JSON.stringify(resource.spec, null, 2)}
+  const renderSpec = () => {
+    if (!resource?.spec) return null;
+    
+    const yamlString = YAML.stringify(resource.spec);
+    
+    return (
+      <Box sx={{ position: 'relative' }}>
+        <pre style={{ 
+          margin: 0,
+          padding: '16px',
+          backgroundColor: 'rgba(0,0,0,0.1)',
+          borderRadius: '4px',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontFamily: 'monospace'
+        }}>
+          {yamlString}
         </pre>
-      </Paper>
-    </Box>
-  );
+        <IconButton
+          size="small"
+          onClick={() => navigator.clipboard.writeText(yamlString)}
+          sx={{ 
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            color: 'text.secondary'
+          }}
+        >
+          <Icons.ContentCopy fontSize="small" />
+        </IconButton>
+      </Box>
+    );
+  };
 
-  const renderStatus = () => (
-    <Box>
-      <Paper sx={{ p: 2, backgroundColor: 'background.paper' }}>
-        <pre style={{ margin: 0, overflow: 'auto' }}>
-          {JSON.stringify(resource.status, null, 2)}
+  const renderStatus = () => {
+    if (!resource?.status) return null;
+
+    const yamlString = YAML.stringify(resource.status);
+    
+    return (
+      <Box sx={{ position: 'relative' }}>
+        <pre style={{ 
+          margin: 0,
+          padding: '16px',
+          backgroundColor: 'rgba(0,0,0,0.1)',
+          borderRadius: '4px',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontFamily: 'monospace'
+        }}>
+          {yamlString}
         </pre>
-      </Paper>
-    </Box>
-  );
+        <IconButton
+          size="small"
+          onClick={() => navigator.clipboard.writeText(yamlString)}
+          sx={{ 
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            color: 'text.secondary'
+          }}
+        >
+          <Icons.ContentCopy fontSize="small" />
+        </IconButton>
+      </Box>
+    );
+  };
 
   const renderPodDetails = () => {
     if (resource.kind !== 'Pod') return null;
