@@ -230,6 +230,64 @@ class ResourceManager {
       };
     }
   }
+
+  async deleteResource({ namespace, name, kind, context }) {
+    try {
+      await this.setupClient(context);
+      
+      switch (kind) {
+        case 'Pod':
+          await this.k8sApi.core.deleteNamespacedPod(name, namespace);
+          break;
+        case 'Deployment':
+          await this.k8sApi.apps.deleteNamespacedDeployment(name, namespace);
+          break;
+        case 'Service':
+          await this.k8sApi.core.deleteNamespacedService(name, namespace);
+          break;
+        case 'ConfigMap':
+          await this.k8sApi.core.deleteNamespacedConfigMap(name, namespace);
+          break;
+        case 'Secret':
+          await this.k8sApi.core.deleteNamespacedSecret(name, namespace);
+          break;
+        case 'PersistentVolume':
+          await this.k8sApi.core.deletePersistentVolume(name);
+          break;
+        case 'StatefulSet':
+          await this.k8sApi.apps.deleteNamespacedStatefulSet(name, namespace);
+          break;
+        case 'DaemonSet':
+          await this.k8sApi.apps.deleteNamespacedDaemonSet(name, namespace);
+          break;
+        case 'Ingress':
+          await this.k8sApi.networking.deleteNamespacedIngress(name, namespace);
+          break;
+        case 'PersistentVolumeClaim':
+          await this.k8sApi.core.deleteNamespacedPersistentVolumeClaim(name, namespace);
+          break;
+        case 'CronJob':
+          await this.k8sApi.batch.deleteNamespacedCronJob(name, namespace);
+          break;
+        case 'Job':
+          await this.k8sApi.batch.deleteNamespacedJob(name, namespace);
+          break;
+        default:
+          throw new Error(`Unsupported resource kind: ${kind}`);
+      }
+
+      return {
+        success: true,
+        message: `${kind} deleted successfully`
+      };
+    } catch (error) {
+      console.error(`Error deleting ${kind}:`, error);
+      return {
+        success: false,
+        message: error.message
+      };
+    }
+  }
 }
 
 module.exports = new ResourceManager(); 
