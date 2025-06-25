@@ -16,7 +16,7 @@ A modern, cross-platform Kubernetes cluster management and AI-powered advisor de
 
 1. **Clone the repository:**
    ```sh
-   git clone https://github.com/your-org/clustereye.git
+   git clone https://github.com/zoroglucihat/clustereye.git
    cd clustereye
    ```
 
