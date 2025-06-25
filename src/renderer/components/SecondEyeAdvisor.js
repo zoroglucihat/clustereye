@@ -69,25 +69,19 @@ function SecondEyeAdvisor({ open, onClose, currentContext }) {
     setIsTyping(true);
 
     try {
-      console.log('Sending to AI:', { message: input, model: selectedModel }); // Debug log
+      console.log('AI Advisor is currently disabled'); // Debug log
 
-      const response = await ipcRenderer.invoke('ask-advisor', {
-        message: input,
-        model: selectedModel,
-        context: currentContext
-      });
-
-      console.log('AI Response received:', response); // Debug log
-
+      // AI Advisor is currently disabled - show message instead of calling API
       const aiMessage = {
         role: 'assistant',
-        content: response,
-        timestamp: new Date().toISOString()
+        content: 'AI Advisor is currently disabled. The OpenAI integration has been commented out to prevent startup errors. Please set up your OpenAI API key to enable this feature.',
+        timestamp: new Date().toISOString(),
+        isError: true
       };
-
+      
       setMessages(prev => [...prev, aiMessage]);
     } catch (error) {
-      console.error('Error getting AI response:', error);
+      console.error('Error in AI advisor:', error);
       
       // Hata mesajını kullanıcıya göster
       const errorMessage = {

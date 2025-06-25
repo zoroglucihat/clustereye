@@ -7,10 +7,14 @@ const fs = require('fs');
 const os = require('os');
 const YAML = require('yaml');
 const { exec } = require('child_process');
-const OpenAI = require('openai');
+// const OpenAI = require('openai');
 const { spawn } = require('child_process');
+const https = require('https');
+const { pipeline } = require('stream');
+const { promisify } = require('util');
 
 const store = new Store();
+const pipelineAsync = promisify(pipeline);
 
 let mainWindow = null;  // mainWindow'u global olarak tutuyoruz
 let kc;
@@ -19,10 +23,13 @@ let kc;
 let k8sConfig = null;
 let k8sApi = null;
 
-// OpenAI istemcisi
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Helm binary yönetimi
+let helmBinaryPath = null;
+
+// OpenAI istemcisi - commented out
+// const openai = new OpenAI({
+//   apiKey: process.env.OPENAI_API_KEY,
+// });
 
 function createWindow() {
   // Debug için bekleme noktası
@@ -119,7 +126,15 @@ function createWindow() {
 }
 
 // Uygulama hazır olduğunda
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    // Helm binary'sini hazırla
+    await setupHelmBinary();
+    console.log('Helm binary setup completed');
+  } catch (error) {
+    console.error('Failed to setup Helm binary:', error);
+  }
+  
   createWindow();
 
   // macOS için pencere yönetimi
@@ -363,7 +378,7 @@ ipcMain.handle('get-helm-releases', async (event, context) => {
     await setupKubernetesClient(context);
     
     // Kubernetes API'sini kullanarak Helm release'lerini al
-    const customApi = k8sConfig.makeApiClient(k8s.CustomObjectsApi);
+    const customApi = k8s.CustomObjectsApi.makeApiClient(k8sConfig);
     
     try {
       // Tüm namespace'lerdeki Helm release'lerini al
@@ -409,28 +424,69 @@ ipcMain.handle('get-helm-releases', async (event, context) => {
         'owner=helm'
       );
 
-      const releases = secretsResponse.body.items
-        .filter(secret => secret.metadata.labels?.['owner'] === 'helm')
-        .map(secret => {
-          const data = JSON.parse(Buffer.from(secret.data['release'], 'base64').toString());
-          return {
-            name: secret.metadata.labels['name'],
-            namespace: secret.metadata.namespace,
-            version: data.version,
-            status: data.status,
-            chart: {
-              name: data.chart.name,
-              version: data.chart.version,
-              metadata: {
-                name: data.chart.metadata.name,
-                version: data.chart.metadata.version,
-                description: data.chart.metadata.description
+      const releases = [];
+      
+      for (const secret of secretsResponse.body.items) {
+        try {
+          if (secret.metadata.labels?.['owner'] === 'helm' && secret.data?.['release']) {
+            const releaseData = Buffer.from(secret.data['release'], 'base64');
+            
+            // Gzip decompress if needed
+            let decompressedData;
+            try {
+              // Check if data starts with gzip magic number
+              if (releaseData[0] === 0x1f && releaseData[1] === 0x8b) {
+                const zlib = require('zlib');
+                decompressedData = zlib.gunzipSync(releaseData);
+              } else {
+                decompressedData = releaseData;
               }
-            },
-            updated: data.info.last_deployed,
-            info: data.info
-          };
-        });
+              
+              const data = JSON.parse(decompressedData.toString());
+              
+              releases.push({
+                name: secret.metadata.labels['name'] || secret.metadata.name,
+                namespace: secret.metadata.namespace,
+                version: data.version || '1',
+                status: data.status || 'unknown',
+                chart: {
+                  name: data.chart?.name || 'unknown',
+                  version: data.chart?.version || 'unknown',
+                  metadata: {
+                    name: data.chart?.metadata?.name || 'unknown',
+                    version: data.chart?.metadata?.version || 'unknown',
+                    description: data.chart?.metadata?.description || ''
+                  }
+                },
+                updated: data.info?.last_deployed || secret.metadata.creationTimestamp,
+                info: data.info || {}
+              });
+            } catch (parseError) {
+              console.warn(`Failed to parse Helm release data for secret ${secret.metadata.name}:`, parseError.message);
+              // Add basic info even if parsing fails
+              releases.push({
+                name: secret.metadata.labels['name'] || secret.metadata.name,
+                namespace: secret.metadata.namespace,
+                version: '1',
+                status: 'unknown',
+                chart: {
+                  name: 'unknown',
+                  version: 'unknown',
+                  metadata: {
+                    name: 'unknown',
+                    version: 'unknown',
+                    description: 'Failed to parse release data'
+                  }
+                },
+                updated: secret.metadata.creationTimestamp,
+                info: {}
+              });
+            }
+          }
+        } catch (secretError) {
+          console.warn(`Error processing Helm secret ${secret.metadata.name}:`, secretError.message);
+        }
+      }
 
       return {
         success: true,
@@ -938,43 +994,43 @@ ipcMain.handle('exec-shell', async (event, { namespace, name, context }) => {
   }
 });
 
-// AI Advisor handler
-ipcMain.handle('ask-advisor', async (event, { message, model, context }) => {
-  try {
-    // Debug için log ekleyelim
-    console.log('Starting AI analysis with context:', {
-      contextName: context?.name,
-      model: model
-    });
+// AI Advisor handler - commented out
+// ipcMain.handle('ask-advisor', async (event, { message, model, context }) => {
+//   try {
+//     // Debug için log ekleyelim
+//     console.log('Starting AI analysis with context:', {
+//       contextName: context?.name,
+//       model: model
+//     });
 
-    // Cluster bilgilerini al
-    const clusterInfo = await getClusterInfo(context);
+//     // Cluster bilgilerini al
+//     const clusterInfo = await getClusterInfo(context);
 
-    const systemPrompt = `You are Second Eye Advisor, an expert Kubernetes cluster analyst.
-    Current cluster context: ${context?.name}
-    ${clusterInfo.summary}`;
+//     const systemPrompt = `You are Second Eye Advisor, an expert Kubernetes cluster analyst.
+//     Current cluster context: ${context?.name}
+//     ${clusterInfo.summary}`;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4", // veya model parametresine göre seç
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: message }
-      ],
-      temperature: 0.7,
-      max_tokens: 1500
-    });
+//     const response = await openai.chat.completions.create({
+//       model: "gpt-4", // veya model parametresine göre seç
+//       messages: [
+//         { role: "system", content: systemPrompt },
+//         { role: "user", content: message }
+//       ],
+//       temperature: 0.7,
+//       max_tokens: 1500
+//     });
 
-    if (!response.choices || !response.choices[0]?.message?.content) {
-      throw new Error('Invalid response from OpenAI');
-    }
+//     if (!response.choices || !response.choices[0]?.message?.content) {
+//       throw new Error('Invalid response from OpenAI');
+//     }
 
-    return response.choices[0].message.content;
+//     return response.choices[0].message.content;
 
-  } catch (error) {
-    console.error('Error in AI advisor:', error);
-    throw new Error(`Connection error: ${error.message}. Please try again.`);
-  }
-});
+//   } catch (error) {
+//     console.error('Error in AI advisor:', error);
+//     throw new Error(`Connection error: ${error.message}. Please try again.`);
+//   }
+// });
 
 // Cluster bilgilerini topla
 async function getClusterInfo(context) {
@@ -1255,8 +1311,11 @@ ipcMain.handle('delete-helm-release', async (event, { name, namespace, context }
     const tempKubeconfig = `/tmp/kubeconfig-${Date.now()}`;
     fs.writeFileSync(tempKubeconfig, context.config);
 
+    // Helm binary path'ini kullan
+    const helmCommand = helmBinaryPath || 'helm';
+
     return new Promise((resolve, reject) => {
-      exec(`helm uninstall ${name} -n ${namespace} --kubeconfig ${tempKubeconfig}`, (error, stdout, stderr) => {
+      exec(`${helmCommand} uninstall ${name} -n ${namespace} --kubeconfig ${tempKubeconfig}`, (error, stdout, stderr) => {
         // Geçici dosyayı temizle
         try {
           fs.unlinkSync(tempKubeconfig);
@@ -1283,4 +1342,196 @@ ipcMain.handle('delete-helm-release', async (event, { name, namespace, context }
       message: error.message
     };
   }
-}); 
+});
+
+// Terminal komut çalıştırma handler'ı
+ipcMain.handle('execute-terminal-command', async (event, { command, context }) => {
+  try {
+    if (!command || !command.trim()) {
+      throw new Error('No command provided');
+    }
+
+    // Geçici kubeconfig dosyası oluştur
+    const tempKubeconfig = `/tmp/kubeconfig-${Date.now()}`;
+    
+    if (context?.config) {
+      fs.writeFileSync(tempKubeconfig, context.config);
+    } else {
+      // Eğer context yoksa varsayılan kubeconfig'i kullan
+      const defaultKubeconfig = path.join(os.homedir(), '.kube', 'config');
+      if (fs.existsSync(defaultKubeconfig)) {
+        fs.copyFileSync(defaultKubeconfig, tempKubeconfig);
+      } else {
+        throw new Error('No kubeconfig available');
+      }
+    }
+
+    // Helm komutları için binary path'ini ayarla
+    let commandToExecute = command;
+    if (command.startsWith('helm ') && helmBinaryPath) {
+      commandToExecute = command.replace('helm ', `${helmBinaryPath} `);
+    }
+
+    return new Promise((resolve, reject) => {
+      // Komutu çalıştır
+      exec(commandToExecute, {
+        env: {
+          ...process.env,
+          KUBECONFIG: tempKubeconfig
+        },
+        timeout: 30000 // 30 saniye timeout
+      }, (error, stdout, stderr) => {
+        // Geçici dosyayı temizle
+        try {
+          fs.unlinkSync(tempKubeconfig);
+        } catch (err) {
+          console.error('Error cleaning up temp kubeconfig:', err);
+        }
+
+        if (error) {
+          console.error('Command execution error:', error);
+          resolve({
+            success: false,
+            error: error.message,
+            stderr: stderr || '',
+            stdout: stdout || ''
+          });
+          return;
+        }
+
+        resolve({
+          success: true,
+          output: stdout || stderr || 'Command executed successfully',
+          stderr: stderr || '',
+          stdout: stdout || ''
+        });
+      });
+    });
+
+  } catch (error) {
+    console.error('Error in execute-terminal-command:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+});
+
+// Helm binary'sini indir ve yönet
+async function setupHelmBinary() {
+  try {
+    const platform = process.platform;
+    const arch = process.arch === 'x64' ? 'amd64' : process.arch;
+    
+    // Helm binary path'ini belirle
+    const appDataPath = path.join(app.getPath('userData'), 'bin');
+    const helmBinaryName = platform === 'win32' ? 'helm.exe' : 'helm';
+    helmBinaryPath = path.join(appDataPath, helmBinaryName);
+    
+    // Eğer binary zaten varsa, kullan
+    if (fs.existsSync(helmBinaryPath)) {
+      console.log('Helm binary already exists:', helmBinaryPath);
+      return helmBinaryPath;
+    }
+    
+    // Binary yoksa indir
+    console.log('Downloading Helm binary...');
+    
+    // App data dizinini oluştur
+    if (!fs.existsSync(appDataPath)) {
+      fs.mkdirSync(appDataPath, { recursive: true });
+    }
+    
+    // Helm version'ını belirle (en son stable version)
+    const helmVersion = 'v3.14.0';
+    
+    // Platform'a göre download URL'ini oluştur
+    let downloadUrl;
+    if (platform === 'darwin') {
+      downloadUrl = `https://get.helm.sh/helm-${helmVersion}-darwin-${arch}.tar.gz`;
+    } else if (platform === 'linux') {
+      downloadUrl = `https://get.helm.sh/helm-${helmVersion}-linux-${arch}.tar.gz`;
+    } else if (platform === 'win32') {
+      downloadUrl = `https://get.helm.sh/helm-${helmVersion}-windows-${arch}.zip`;
+    } else {
+      throw new Error(`Unsupported platform: ${platform}`);
+    }
+    
+    // Binary'yi indir
+    const tempPath = path.join(appDataPath, `helm-temp-${Date.now()}`);
+    await downloadFile(downloadUrl, tempPath);
+    
+    // Archive'i extract et
+    if (platform === 'win32') {
+      // Windows için zip extract
+      const extract = require('extract-zip');
+      await extract(tempPath, appDataPath);
+      // Extract edilen dosyayı doğru konuma taşı
+      const extractedPath = path.join(appDataPath, 'windows-amd64', helmBinaryName);
+      if (fs.existsSync(extractedPath)) {
+        fs.renameSync(extractedPath, helmBinaryPath);
+        // Geçici dosyaları temizle
+        fs.rmSync(path.join(appDataPath, 'windows-amd64'), { recursive: true });
+      }
+    } else {
+      // Unix sistemler için tar.gz extract
+      const tar = require('tar');
+      await tar.extract({
+        file: tempPath,
+        cwd: appDataPath
+      });
+      // Extract edilen dosyayı doğru konuma taşı
+      const extractedPath = path.join(appDataPath, `darwin-${arch}`, helmBinaryName);
+      if (fs.existsSync(extractedPath)) {
+        fs.renameSync(extractedPath, helmBinaryPath);
+        // Geçici dosyaları temizle
+        fs.rmSync(path.join(appDataPath, `darwin-${arch}`), { recursive: true });
+      }
+    }
+    
+    // Geçici dosyayı sil
+    fs.unlinkSync(tempPath);
+    
+    // Binary'ye execute permission ver (Unix sistemler için)
+    if (platform !== 'win32') {
+      fs.chmodSync(helmBinaryPath, '755');
+    }
+    
+    console.log('Helm binary downloaded successfully:', helmBinaryPath);
+    return helmBinaryPath;
+    
+  } catch (error) {
+    console.error('Error setting up Helm binary:', error);
+    // Fallback olarak sistem Helm'ini dene
+    try {
+      const { execSync } = require('child_process');
+      execSync('helm version', { stdio: 'pipe' });
+      helmBinaryPath = 'helm'; // Sistem Helm'ini kullan
+      console.log('Using system Helm binary');
+      return helmBinaryPath;
+    } catch (fallbackError) {
+      console.error('System Helm not available:', fallbackError);
+      throw new Error('Helm binary not available and could not be downloaded');
+    }
+  }
+}
+
+// Dosya indirme fonksiyonu
+async function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https.get(url, (response) => {
+      if (response.statusCode !== 200) {
+        reject(new Error(`Failed to download: ${response.statusCode}`));
+        return;
+      }
+      pipeline(response, file, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    }).on('error', reject);
+  });
+} 

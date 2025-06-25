@@ -24,6 +24,7 @@ import ClusterResources from './components/ClusterResources';
 import ResourceList from './components/ResourceList';
 import BottomPanel from './components/BottomPanel';
 import SecondEyeAdvisor from './components/SecondEyeAdvisor';
+import Terminal from './components/Terminal';
 
 const { ipcRenderer } = window.require('electron');
 
@@ -140,6 +141,7 @@ function App() {
   const [localConfig, setLocalConfig] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showAdvisor, setShowAdvisor] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
 
   useEffect(() => {
     loadConfigs();
@@ -336,9 +338,23 @@ function App() {
             </IconButton>
             <Icons.Visibility sx={{ mr: 1 }} />
             <Typography variant="h6" noWrap component="div">
-              ClusterEyeAI
+              clustereye
             </Typography>
             <Box sx={{ flexGrow: 1 }} />
+            <Tooltip title="Integrated Terminal">
+              <IconButton 
+                color="inherit" 
+                onClick={() => setShowTerminal(!showTerminal)}
+                sx={{ mr: 1 }}
+              >
+                <Icons.Terminal 
+                  sx={{ 
+                    fontSize: 24,
+                    color: showTerminal ? 'primary.light' : 'inherit'
+                  }} 
+                />
+              </IconButton>
+            </Tooltip>
             <Tooltip title="Second Eye Advisor">
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <IconButton 
@@ -420,6 +436,12 @@ function App() {
         <SecondEyeAdvisor
           open={showAdvisor}
           onClose={() => setShowAdvisor(false)}
+          currentContext={currentContext}
+        />
+        
+        <Terminal
+          open={showTerminal}
+          onClose={() => setShowTerminal(false)}
           currentContext={currentContext}
         />
       </Box>
